@@ -106,6 +106,12 @@ If KeyFlux does not load correctly:
    * KeyFlux version
    * Relevant LSPosed/Vector logs
 
+## Contributors
+
+* [NawafCode](https://github.com/NawafCode) - Original project author.
+* [Boris448](https://github.com/boris446589659) - Fork maintenance and device validation.
+* **OpenAI Codex** - AI-assisted debugging, implementation, and validation.
+
 ## License
 
 This project is licensed under the MIT License.
