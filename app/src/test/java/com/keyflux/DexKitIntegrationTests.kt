@@ -180,6 +180,28 @@ class DexKitIntegrationTests {
         }
     }
 
+    // --- Chinese personalization ---
+
+    @Test fun `Chinese learning enables local training cache`() {
+        val prefs = mapOf("keyflux_enable_chinese_learning" to true)
+        assertEquals(true, FlagsOverrideManager.evaluateFlagOverride("enable_chinese_training_cache", prefs))
+    }
+
+    @Test fun `Chinese learning preserves correction storage and user history`() {
+        val prefs = mapOf("keyflux_enable_chinese_learning" to true)
+        assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("disable_correction_storage", prefs))
+        assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("enable_user_history_decay", prefs))
+    }
+
+    @Test fun `Chinese learning takes precedence when privacy is also enabled`() {
+        val prefs = mapOf(
+            "keyflux_enable_chinese_learning" to true,
+            "keyflux_enable_privacy" to true
+        )
+        assertEquals(true, FlagsOverrideManager.evaluateFlagOverride("enable_chinese_training_cache", prefs))
+        assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("disable_correction_storage", prefs))
+    }
+
     // --- Clipboard chips ---
 
     @Test fun `Clipboard chips disabled returns false for entity extraction`() {

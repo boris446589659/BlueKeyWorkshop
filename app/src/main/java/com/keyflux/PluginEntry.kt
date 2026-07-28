@@ -1,10 +1,15 @@
 package com.keyflux
 
 import android.app.Application
+import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Resources
 import android.net.Uri
+import android.os.UserManager
 import androidx.core.content.edit
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
@@ -18,6 +23,8 @@ import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.wrap.DexMethod
 import kotlinx.coroutines.*
 import java.lang.System.loadLibrary
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -39,6 +46,7 @@ class PluginEntry : IXposedHookLoadPackage {
 
         /** Preference keys that indicate the main settings screen. */
         val MAIN_SETTINGS_MARKERS = listOf(
+            "settings_header_language", "settings_header_theme",
             "pref_key_languages", "pref_key_theme"
         )
 
@@ -48,6 +56,7 @@ class PluginEntry : IXposedHookLoadPackage {
             "keyflux_metered_downloads", "keyflux_enable_floating",
             "keyflux_enable_access_point", "keyflux_enable_amoled",
             "keyflux_enable_grammar", "keyflux_enable_ai",
+            "keyflux_enable_chinese_learning",
             "keyflux_secure_clipboard",
             "keyflux_enable_emoji_kitchen",
             "keyflux_force_incognito", "keyflux_enable_privacy",
@@ -100,10 +109,14 @@ class PluginEntry : IXposedHookLoadPackage {
     internal val prefs = PreferencesManager(this)
     internal val flagsOverride = FlagsOverrideManager(this)
     internal val prefUI = PreferenceUIHelper(this)
+    private val injectedScreens = Collections.synchronizedMap(WeakHashMap<Any, Boolean>())
 
     @Volatile
     internal var isCurrentFieldSecure: Boolean = false
+    @Volatile
+    internal var canApplyFlagOverrides: Boolean = false
     internal var preferenceHooksApplied = false
+    private var userUnlockReceiver: BroadcastReceiver? = null
     val failedHooks = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     // --- Proxy accessors for hooker files (keep binary compatibility) ---
@@ -125,6 +138,7 @@ class PluginEntry : IXposedHookLoadPackage {
     internal val enableAmoled: Boolean get() = prefs.enableAmoled
     internal val forceIncognito: Boolean get() = prefs.forceIncognito
     internal val enablePrivacy: Boolean get() = prefs.enablePrivacy
+    internal val enableChineseLearning: Boolean get() = prefs.enableChineseLearning
     internal val secureClipboard: Boolean get() = prefs.secureClipboard
     internal val enableInlineSuggestions: Boolean get() = prefs.enableInlineSuggestions
     internal val enableProactiveEmoji: Boolean get() = prefs.enableProactiveEmoji
@@ -155,6 +169,37 @@ class PluginEntry : IXposedHookLoadPackage {
 
     // --- Initialization ---
 
+    private fun updateDirectBootState(context: Context) {
+        val unlocked = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            context.getSystemService(UserManager::class.java)?.isUserUnlocked == true
+        } else {
+            true
+        }
+        canApplyFlagOverrides = unlocked
+        if (unlocked || userUnlockReceiver != null) return
+
+        val appContext = context.applicationContext ?: context
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receivedContext: Context, intent: Intent) {
+                if (intent.action != Intent.ACTION_USER_UNLOCKED) return
+                loadPreferences(receivedContext)
+                canApplyFlagOverrides = true
+                runCatching { receivedContext.unregisterReceiver(this) }
+                userUnlockReceiver = null
+                logAlways("User unlocked; flag overrides enabled")
+            }
+        }
+        userUnlockReceiver = receiver
+        val filter = IntentFilter(Intent.ACTION_USER_UNLOCKED)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            appContext.registerReceiver(receiver, filter)
+        }
+        logAlways("Direct Boot active; flag overrides deferred until user unlock")
+    }
+
     internal fun initializeKeyFlux(context: Context, classLoader: ClassLoader) {
         try {
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -171,7 +216,7 @@ class PluginEntry : IXposedHookLoadPackage {
 
         try {
             loadPreferences(context)
-            prefs.registerSettingsObserver(context)
+            updateDirectBootState(context)
 
             val sp = getSafeSharedPreferences(context, "keyflux_hook")
             val spKeyMethodReadConfig = "SP_KEY_METHOD_READ_CONFIG"
@@ -188,10 +233,14 @@ class PluginEntry : IXposedHookLoadPackage {
                 log("Failed to get package info for version code: ${e.message}")
                 -1L
             }
-            val gboardVersion = sp.getLong(spKeyVersion, -1L)
+            val gboardVersion = when (val storedVersion = sp.all[spKeyVersion]) {
+                is Number -> storedVersion.toLong()
+                is String -> storedVersion.toLongOrNull() ?: -1L
+                else -> -1L
+            }
             val isSameVersion = versionCode == gboardVersion
 
-            val methodReadConfigStr = sp.getString(spKeyMethodReadConfig, null)
+            val methodReadConfigStr = sp.all[spKeyMethodReadConfig] as? String
             val dexMethodReadConfig: DexMethod? = methodReadConfigStr?.let {
                 try {
                     DexMethod(it)
@@ -201,17 +250,21 @@ class PluginEntry : IXposedHookLoadPackage {
                 }
             }
 
-            if (isSameVersion && dexMethodReadConfig != null) {
-                log("Using cached ReadConfig method: ${dexMethodReadConfig.serialize()}")
-                try {
-                    FlagsManager.hook(this@PluginEntry, classLoader, dexMethodReadConfig)
-                } catch (t: Throwable) {
-                    log("Failed to hook cached FlagsManager: ${t.message}")
-                    failedHooks.add("FlagsManager")
-                }
+            val cachedHooked = isSameVersion && dexMethodReadConfig != null &&
+                FlagsManager.hook(this@PluginEntry, classLoader, dexMethodReadConfig)
+
+            if (cachedHooked) {
+                logAlways("Using validated cached flag reader: ${dexMethodReadConfig!!.serialize()}")
             } else {
+                if (dexMethodReadConfig != null) {
+                    sp.edit {
+                        remove(spKeyMethodReadConfig)
+                        remove(spKeyVersion)
+                    }
+                    log("Discarded stale flag reader cache")
+                }
                 CoroutineScope(Dispatchers.Default).launch {
-                    log("Resolving ReadConfig method via DexKit (version changed or cache miss)...")
+                    log("Resolving flag reader via DexKit")
                     val dexBridge = try {
                         DexKitBridge.create(classLoader, true)
                     } catch (t: Throwable) {
@@ -220,20 +273,15 @@ class PluginEntry : IXposedHookLoadPackage {
                         null
                     }
                     val method = dexBridge?.let { flagsOverride.findReadConfigMethod(it) }
-                    if (method != null) {
+                    if (method != null && FlagsManager.hook(this@PluginEntry, classLoader, method)) {
                         sp.edit {
                             putLong(spKeyVersion, versionCode)
                             putString(spKeyMethodReadConfig, method.serialize())
                         }
-                        log("ReadConfig method resolved and cached: ${method.serialize()}")
-                        try {
-                            FlagsManager.hook(this@PluginEntry, classLoader, method)
-                        } catch (t: Throwable) {
-                            log("Failed to hook FlagsManager: ${t.message}")
-                            failedHooks.add("FlagsManager")
-                        }
+                        failedHooks.remove("FlagsManager")
+                        logAlways("Flag reader resolved and cached: ${method.serialize()}")
                     } else {
-                        log("Failed to resolve ReadConfig method via DexKit")
+                        logAlways("Failed to resolve a compatible Gboard flag reader")
                         failedHooks.add("FlagsManager")
                     }
                     try {
@@ -259,8 +307,6 @@ class PluginEntry : IXposedHookLoadPackage {
             val packageName = lpparam.packageName
             val processName = lpparam.processName
             val classLoader = lpparam.classLoader
-
-            GodModeHookers.initGboard(classLoader)
 
             logAlways("Plugin loaded: package=$packageName, process=$processName, moduleVersion=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             logAlways("Device: ${CompatibilityManager.manufacturer} ${android.os.Build.MODEL}, Android ${CompatibilityManager.androidVersion} (API ${CompatibilityManager.sdkInt})")
@@ -315,43 +361,32 @@ class PluginEntry : IXposedHookLoadPackage {
                 logAlways("Failed to hook Application#attach: ${t.message}")
             }
 
-            // Load hookers in parallel (WaEnhancer pattern)
-            val executorService = java.util.concurrent.Executors.newFixedThreadPool(3)
-            val hookers = listOf(
-                Runnable {
-                    try {
-                        ClipboardHooker.hook(this, classLoader)
-                        logAlways("Successfully hooked Clipboard")
-                    } catch (t: Throwable) {
-                        logAlways("CRASH PREVENTED: Error hooking Clipboard: ${t.message}")
-                        failedHooks.add("ClipboardHooker")
-                    }
-                },
-                Runnable {
-                    try {
-                        PreferenceHooker.hook(this, classLoader)
-                        logAlways("Successfully hooked Preferences")
-                    } catch (t: Throwable) {
-                        logAlways("CRASH PREVENTED: Error hooking Preferences: ${t.message}")
-                        failedHooks.add("PreferenceHooker")
-                    }
-                },
-                Runnable {
-                    try {
-                        ThemeHooker.hook(this, classLoader)
-                        logAlways("Successfully hooked Theme")
-                    } catch (t: Throwable) {
-                        logAlways("CRASH PREVENTED: Error hooking Theme: ${t.message}")
-                        failedHooks.add("ThemeHooker")
-                    }
-                }
-            )
-
-            for (hooker in hookers) {
-                executorService.submit(hooker)
+            try {
+                PreferenceHooker.hook(this, classLoader)
+            } catch (t: Throwable) {
+                logAlways("Preference hooks disabled: ${t.message}")
+                failedHooks.add("PreferenceHooker")
             }
-            executorService.shutdown()
-            executorService.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+            try {
+                ThemeHooker.hook(this, classLoader)
+            } catch (t: Throwable) {
+                logAlways("Theme hooks disabled: ${t.message}")
+                failedHooks.add("ThemeHooker")
+            }
+
+            // Clipboard class discovery uses DexKit and must not block Gboard startup.
+            val clipboardExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "KeyFlux-ClipboardInit").apply { isDaemon = true }
+            }
+            clipboardExecutor.execute {
+                try {
+                    ClipboardHooker.hook(this, classLoader)
+                } catch (t: Throwable) {
+                    logAlways("Clipboard hooks disabled: ${t.message}")
+                    failedHooks.add("ClipboardHooker")
+                }
+            }
+            clipboardExecutor.shutdown()
 
         } catch (t: Throwable) {
             logAlways("CRASH PREVENTED in handleLoadPackage: ${t.stackTraceToString()}")
@@ -456,6 +491,61 @@ class PluginEntry : IXposedHookLoadPackage {
     }
 
     internal fun hookPreferenceFragments(classLoader: ClassLoader) {
+        if (preferenceHooksApplied) return
+        try {
+            val className = "com.google.android.libraries.inputmethod.preferencewidgets.CommonPreferenceFragment"
+            val fragmentClass = XposedHelpers.findClass(className, classLoader)
+            val preferenceGroupClass = XposedHelpers.findClass("androidx.preference.PreferenceGroup", classLoader)
+
+            // bf() runs after the complete preference screen has loaded on Gboard 17.8.3.
+            // As a fallback, hook only bc(); hooking both bb() and bc() duplicates injection.
+            val lifecycleMethod = try {
+                fragmentClass.getDeclaredMethod("bf").apply { isAccessible = true }
+            } catch (_: Throwable) {
+                XposedHelpers.findMethodExact(
+                    fragmentClass,
+                    "bc",
+                    Int::class.javaPrimitiveType,
+                    preferenceGroupClass
+                )
+            }
+
+            XposedBridge.hookMethod(lifecycleMethod, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val fragment = param.thisObject
+                        val screen = prefUI.getPreferenceScreen(fragment, classLoader) ?: return
+                        val context = prefUI.getFragmentContext(fragment) ?: return
+                        val hasMainMarker = MAIN_SETTINGS_MARKERS.any {
+                            prefUI.findPreference(screen, it) != null
+                        }
+                        val alreadyInjected = prefUI.findPreference(
+                            screen,
+                            "keyflux_settings_category"
+                        ) != null || injectedScreens.containsKey(screen)
+
+                        if (!shouldInjectSettings(fragment.javaClass.name, hasMainMarker, alreadyInjected)) return
+
+                        synchronized(injectedScreens) {
+                            if (injectedScreens.containsKey(screen)) return
+                            injectedScreens[screen] = true
+                        }
+                        injectKeyFluxSettings(screen, context, classLoader, preferenceGroupClass)
+                        logAlways("Injected KeyFlux settings once into ${fragment.javaClass.name}")
+                    } catch (error: Throwable) {
+                        logAlways("Error injecting KeyFlux settings: ${error.message}")
+                    }
+                }
+            })
+            preferenceHooksApplied = true
+            logAlways("Hooked $className#${lifecycleMethod.name} for settings injection")
+        } catch (error: Throwable) {
+            logAlways("Failed to hook Gboard preferences: ${error.message}")
+        }
+    }
+
+    @Suppress("unused")
+    private fun hookPreferenceFragmentsLegacy(classLoader: ClassLoader) {
         if (preferenceHooksApplied) return
         try {
             val prefFragmentClasses = listOf(
@@ -592,6 +682,318 @@ class PluginEntry : IXposedHookLoadPackage {
         classLoader: ClassLoader,
         preferenceGroupClass: Class<*>?
     ) {
+        // The settings Activity can be recreated without restarting Gboard.
+        // Refresh from disk so a new screen never inherits a stale UI snapshot.
+        loadPreferences(context)
+
+        val preferenceClass = XposedHelpers.findClass("androidx.preference.Preference", classLoader)
+        val switchPreferenceClass = try {
+            XposedHelpers.findClass("androidx.preference.SwitchPreferenceCompat", classLoader)
+        } catch (_: Throwable) {
+            XposedHelpers.findClass("androidx.preference.SwitchPreference", classLoader)
+        }
+        val categoryClass = XposedHelpers.findClass("androidx.preference.PreferenceCategory", classLoader)
+
+        fun listenerInterface(isClick: Boolean): Class<*> {
+            val candidates = preferenceClass.declaredFields.map { it.type }.filter { it.isInterface }.distinct()
+            return candidates.firstOrNull { candidate ->
+                val method = candidate.declaredMethods.singleOrNull() ?: return@firstOrNull false
+                if (method.returnType != Boolean::class.javaPrimitiveType) return@firstOrNull false
+                val parameters = method.parameterTypes
+                if (isClick) {
+                    parameters.size == 1 && preferenceClass.isAssignableFrom(parameters[0])
+                } else {
+                    (parameters.size == 1 && parameters[0] == Any::class.java) ||
+                        (parameters.size == 2 && parameters.last() == Any::class.java)
+                }
+            } ?: throw IllegalStateException(
+                if (isClick) "Preference click listener interface not found"
+                else "Preference change listener interface not found"
+            )
+        }
+
+        val changeListenerInterface = listenerInterface(false)
+        val clickListenerInterface = listenerInterface(true)
+
+        fun checkCompatibilityAndDisable(preference: Any, key: String) {
+            val clipboardFeature = key in setOf(
+                "keyflux_secure_clipboard",
+                "keyflux_clip_days",
+                "keyflux_clip_size",
+                "keyflux_enable_clipboard_chips"
+            )
+            val flagsFeature = key in setOf(
+                "keyflux_enable_ai",
+                "keyflux_enable_grammar",
+                "keyflux_enable_chinese_learning",
+                "keyflux_enable_multilingual",
+                "keyflux_enable_floating",
+                "keyflux_enable_access_point",
+                "keyflux_metered_downloads",
+                "keyflux_enable_inline_suggestions",
+                "keyflux_enable_proactive_emoji",
+                "keyflux_enable_tflite_engine",
+                "keyflux_enable_fast_access"
+            )
+
+            when {
+                clipboardFeature && failedHooks.contains("ClipboardHooker") -> {
+                    prefUI.setPreferenceEnabled(preference, false)
+                    prefUI.setPreferenceSummary(
+                        preference,
+                        Localization.getString("keyflux_feature_unavailable_clipboard")
+                    )
+                }
+                key == "keyflux_enable_amoled" && failedHooks.contains("ThemeHooker") -> {
+                    prefUI.setPreferenceEnabled(preference, false)
+                    prefUI.setPreferenceSummary(
+                        preference,
+                        Localization.getString("keyflux_feature_unavailable_theme")
+                    )
+                }
+                flagsFeature && (
+                    failedHooks.contains("FlagsManager") || failedHooks.contains("DexKitBridge")
+                ) -> {
+                    prefUI.setPreferenceEnabled(preference, false)
+                    prefUI.setPreferenceSummary(
+                        preference,
+                        Localization.getString("keyflux_feature_unavailable_flags")
+                    )
+                }
+            }
+        }
+
+        fun createSwitch(key: String, defaultValue: Boolean = false): Any {
+            val preference = XposedHelpers.newInstance(switchPreferenceClass, context)
+            prefUI.setPreferenceKey(preference, key)
+            prefUI.setPreferenceTitle(preference, Localization.getString(key + "_title"))
+            prefUI.setPreferenceSummary(preference, Localization.getString(key + "_summary"))
+            prefUI.setPreferencePersistent(preference, false)
+            prefUI.setIconSpaceReserved(preference, false)
+            prefUI.setPreferenceChecked(preference, prefsMap[key] as? Boolean ?: defaultValue)
+
+            val listener = java.lang.reflect.Proxy.newProxyInstance(
+                classLoader,
+                arrayOf(changeListenerInterface)
+            ) { proxy, method, args ->
+                if (method.declaringClass == Any::class.java) {
+                    when (method.name) {
+                        "toString" -> "KeyFluxChangeListener($key)"
+                        "hashCode" -> System.identityHashCode(proxy)
+                        "equals" -> proxy === args?.getOrNull(0)
+                        else -> null
+                    }
+                } else {
+                    val checked = args?.lastOrNull() as? Boolean ?: return@newProxyInstance false
+                    savePreferenceToProvider(context, key, checked)
+                    prefsMap[key] = checked
+                    true
+                }
+            }
+            prefUI.setOnPreferenceChangeListener(preference, listener)
+            checkCompatibilityAndDisable(preference, key)
+            return preference
+        }
+
+        fun findActivity(start: Context): Activity? {
+            var current: Context? = start
+            val visited = HashSet<Context>()
+            while (current != null && visited.add(current)) {
+                if (current is Activity) return current
+                current = (current as? ContextWrapper)?.baseContext
+            }
+            return null
+        }
+
+        fun createInputPreference(key: String, defaultValue: String): Any {
+            val preference = XposedHelpers.newInstance(preferenceClass, context)
+            val title = Localization.getString(key + "_title")
+            val summaryTemplate = Localization.getString(key + "_summary")
+            prefUI.setPreferenceKey(preference, key)
+            prefUI.setPreferenceTitle(preference, title)
+            prefUI.setPreferencePersistent(preference, false)
+            prefUI.setIconSpaceReserved(preference, false)
+
+            fun rawValue(): String =
+                (prefsMap[key] as? Number)?.toString() ?: (prefsMap[key] as? String) ?: defaultValue
+
+            fun displayValue(): String {
+                val raw = rawValue()
+                if (key != "keyflux_clip_days") return raw
+                val days = raw.toIntOrNull() ?: defaultValue.toInt()
+                return if (days <= 0) {
+                    Localization.getString("forever")
+                } else {
+                    "$days ${Localization.getString("days")}"
+                }
+            }
+
+            fun updateSummary() {
+                val summary = try {
+                    summaryTemplate.format(displayValue())
+                } catch (_: Exception) {
+                    summaryTemplate
+                }
+                prefUI.setPreferenceSummary(preference, summary)
+            }
+            updateSummary()
+
+            val listener = java.lang.reflect.Proxy.newProxyInstance(
+                classLoader,
+                arrayOf(clickListenerInterface)
+            ) { proxy, method, args ->
+                if (method.declaringClass == Any::class.java) {
+                    when (method.name) {
+                        "toString" -> "KeyFluxClickListener($key)"
+                        "hashCode" -> System.identityHashCode(proxy)
+                        "equals" -> proxy === args?.getOrNull(0)
+                        else -> null
+                    }
+                } else {
+                    val activity = findActivity(context)
+                    if (activity == null) {
+                        log("Cannot show editor for $key: fragment context has no Activity")
+                        return@newProxyInstance true
+                    }
+                    val input = android.widget.EditText(activity).apply {
+                        setText(rawValue())
+                        inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                        setSelection(text.length)
+                    }
+                    android.app.AlertDialog.Builder(activity)
+                        .setTitle(title)
+                        .setView(input)
+                        .setPositiveButton(android.R.string.ok) { _, _ ->
+                            val value = input.text.toString().toIntOrNull() ?: defaultValue.toInt()
+                            savePreferenceToProvider(context, key, value)
+                            prefsMap[key] = value
+                            updateSummary()
+                        }
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show()
+                    true
+                }
+            }
+            prefUI.setOnPreferenceClickListener(preference, listener)
+            checkCompatibilityAndDisable(preference, key)
+            return preference
+        }
+
+        fun createCategory(key: String, titleKey: String): Any {
+            val category = XposedHelpers.newInstance(categoryClass, context)
+            prefUI.setPreferenceKey(category, key)
+            prefUI.setPreferenceTitle(category, Localization.getString(titleKey))
+            prefUI.setPreferencePersistent(category, false)
+            prefUI.setIconSpaceReserved(category, false)
+            if (!prefUI.addPreference(screen, category)) {
+                throw IllegalStateException("Could not add preference category $key")
+            }
+            return category
+        }
+
+        fun add(group: Any, preference: Any) {
+            if (!prefUI.addPreference(group, preference)) {
+                throw IllegalStateException(
+                    "Could not add preference ${prefUI.getPreferenceKey(preference)}"
+                )
+            }
+            // PreferenceGroup attaches its manager during addPreference and can
+            // dispatch an initial value. Reapply module state after attachment.
+            val key = prefUI.getPreferenceKey(preference)
+            val checked = key?.let { prefsMap[it] as? Boolean }
+            if (checked != null) {
+                prefUI.setPreferenceChecked(preference, checked)
+            }
+        }
+
+        val mainCategory = createCategory("keyflux_settings_category", "keyflux_category_title")
+
+        if (failedHooks.isNotEmpty()) {
+            val warning = XposedHelpers.newInstance(preferenceClass, context)
+            prefUI.setPreferenceKey(warning, "keyflux_failed_hooks_warning")
+            prefUI.setPreferenceTitle(
+                warning,
+                Localization.getString("keyflux_warning_failed_hooks_title")
+            )
+            val template = Localization.getString("keyflux_warning_failed_hooks_summary")
+            val summary = try {
+                template.format(failedHooks.joinToString(", "))
+            } catch (_: Exception) {
+                template
+            }
+            prefUI.setPreferenceSummary(warning, summary)
+            prefUI.setPreferenceEnabled(warning, false)
+            prefUI.setPreferencePersistent(warning, false)
+            prefUI.setIconSpaceReserved(warning, false)
+            add(mainCategory, warning)
+        }
+
+        add(mainCategory, createSwitch("keyflux_enable_multilingual"))
+        add(mainCategory, createSwitch("keyflux_metered_downloads"))
+        add(mainCategory, createSwitch("keyflux_enable_floating"))
+        add(mainCategory, createSwitch("keyflux_enable_access_point"))
+        add(mainCategory, createSwitch("keyflux_enable_amoled"))
+        add(mainCategory, createSwitch("keyflux_enable_grammar"))
+        add(mainCategory, createSwitch("keyflux_enable_ai"))
+        add(mainCategory, createSwitch("keyflux_enable_chinese_learning"))
+        add(mainCategory, createInputPreference("keyflux_clip_days", "3"))
+        add(mainCategory, createInputPreference("keyflux_clip_size", "10"))
+        add(mainCategory, createSwitch("keyflux_secure_clipboard"))
+        add(mainCategory, createSwitch("keyflux_enable_emoji_kitchen"))
+        add(mainCategory, createSwitch("keyflux_force_incognito"))
+        add(mainCategory, createSwitch("keyflux_enable_privacy"))
+        add(mainCategory, createSwitch("keyflux_log_switch"))
+
+        val forceStop = XposedHelpers.newInstance(preferenceClass, context)
+        prefUI.setPreferenceKey(forceStop, "keyflux_force_stop_btn")
+        prefUI.setPreferenceTitle(forceStop, Localization.getString("keyflux_force_stop_title"))
+        prefUI.setPreferenceSummary(forceStop, Localization.getString("keyflux_force_stop_summary"))
+        prefUI.setPreferencePersistent(forceStop, false)
+        prefUI.setIconSpaceReserved(forceStop, false)
+        val forceStopListener = java.lang.reflect.Proxy.newProxyInstance(
+            classLoader,
+            arrayOf(clickListenerInterface)
+        ) { proxy, method, args ->
+            if (method.declaringClass == Any::class.java) {
+                when (method.name) {
+                    "toString" -> "KeyFluxForceStopListener"
+                    "hashCode" -> System.identityHashCode(proxy)
+                    "equals" -> proxy === args?.getOrNull(0)
+                    else -> null
+                }
+            } else {
+                val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.parse("package:$PACKAGE_NAME"))
+                if (findActivity(context) == null) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    context.startActivity(intent)
+                } catch (error: Throwable) {
+                    log("Failed to open Gboard app details: ${error.message}")
+                }
+                true
+            }
+        }
+        prefUI.setOnPreferenceClickListener(forceStop, forceStopListener)
+        add(mainCategory, forceStop)
+
+        val experimentalCategory = createCategory(
+            "keyflux_experimental_category",
+            "keyflux_settings_header_experimental_title"
+        )
+        add(experimentalCategory, createSwitch("keyflux_enable_inline_suggestions"))
+        add(experimentalCategory, createSwitch("keyflux_enable_proactive_emoji"))
+        add(experimentalCategory, createSwitch("keyflux_enable_clipboard_chips"))
+        add(experimentalCategory, createSwitch("keyflux_enable_tflite_engine"))
+        add(experimentalCategory, createSwitch("keyflux_enable_fast_access"))
+    }
+
+    @Suppress("unused")
+    private fun injectKeyFluxSettingsLegacy(
+        screen: Any,
+        context: Context,
+        classLoader: ClassLoader,
+        preferenceGroupClass: Class<*>?
+    ) {
         val preferenceClass = XposedHelpers.findClass("androidx.preference.Preference", classLoader)
         val switchPrefClass = try {
             XposedHelpers.findClass("androidx.preference.SwitchPreferenceCompat", classLoader)
@@ -660,6 +1062,7 @@ class PluginEntry : IXposedHookLoadPackage {
             
             val isFlagsFeature = key == "keyflux_enable_ai" ||
                                  key == "keyflux_enable_grammar" ||
+                                 key == "keyflux_enable_chinese_learning" ||
                                  key == "keyflux_enable_multilingual" ||
                                  key == "keyflux_enable_floating" ||
                                  key == "keyflux_enable_access_point" ||
@@ -739,7 +1142,7 @@ class PluginEntry : IXposedHookLoadPackage {
             val getVal = { (prefsMap[key] as? Number)?.toString() ?: (prefsMap[key] as? String) ?: defaultValue }
             val getDisplayVal = {
                 val raw = prefsMap[key] ?: defaultValue
-                if (key == "clip_days") {
+                if (key == "keyflux_clip_days") {
                     val daysInt = (raw as? Number)?.toInt() ?: raw.toString().toIntOrNull() ?: 3
                     if (daysInt <= 0) {
                         Localization.getString("forever")
@@ -842,6 +1245,7 @@ class PluginEntry : IXposedHookLoadPackage {
         insertPreferenceAfter("settings_header_theme", createSwitch("keyflux_enable_amoled", false))
         insertPreferenceAfter("settings_header_correction", createSwitch("keyflux_enable_grammar", false))
         insertPreferenceAfter("settings_header_correction", createSwitch("keyflux_enable_ai", false))
+        insertPreferenceAfter("settings_header_correction", createSwitch("keyflux_enable_chinese_learning", false))
         insertPreferenceAfter("settings_header_clipboard", createInputPref("keyflux_clip_days", "3", true))
         insertPreferenceAfter("settings_header_clipboard", createInputPref("keyflux_clip_size", "10", true))
         insertPreferenceAfter("settings_header_clipboard", createSwitch("keyflux_secure_clipboard", false))

@@ -1,13 +1,28 @@
 package com.keyflux
 
 import org.junit.Assert.*
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
+import java.util.Locale
 
 /**
  * Unit tests for Localization.getString().
  * Verifies language resolution, fallback to English, and unknown key handling.
  */
 class LocalizationTests {
+    private lateinit var originalLocale: Locale
+
+    @Before
+    fun forceEnglishLocale() {
+        originalLocale = Locale.getDefault()
+        Locale.setDefault(Locale.US)
+    }
+
+    @After
+    fun restoreLocale() {
+        Locale.setDefault(originalLocale)
+    }
 
     // --- English (default) ---
 
@@ -55,7 +70,7 @@ class LocalizationTests {
         "log_switch_title", "force_stop_title", "forever", "days"
     )
 
-    private val supportedLanguages = listOf("ar", "fa", "ur", "es", "fr", "de", "ru", "tr", "en")
+    private val supportedLanguages = listOf("ar", "fa", "ur", "es", "fr", "de", "ru", "tr", "zh", "en")
 
     @Test
     fun `all supported languages have essential translation keys`() {
@@ -82,8 +97,7 @@ class LocalizationTests {
             "enable_tflite_engine_title",
             "enable_fast_access_title"
         )
-        // These keys only exist in English and Arabic
-        for (lang in listOf("en", "ar")) {
+        for (lang in listOf("en", "ar", "zh")) {
             val translations = Localization.translations[lang]
             for (key in experimentalKeys) {
                 val value = translations!![key] ?: translations["keyflux_$key"]
@@ -92,6 +106,15 @@ class LocalizationTests {
                     value
                 )
             }
+        }
+    }
+
+    @Test
+    fun `Chinese learning strings exist in English and Chinese`() {
+        for (lang in listOf("en", "zh")) {
+            val translations = Localization.translations[lang]!!
+            assertFalse(translations["keyflux_enable_chinese_learning_title"].isNullOrBlank())
+            assertFalse(translations["keyflux_enable_chinese_learning_summary"].isNullOrBlank())
         }
     }
 

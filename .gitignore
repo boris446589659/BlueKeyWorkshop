@@ -23,6 +23,8 @@ local.properties
 /*.sh
 /jadx*
 /gboard_decompiled/
+/device-apk/
+/tools/
 /*.apk
 /gboard_pkg.txt
 /activities.txt

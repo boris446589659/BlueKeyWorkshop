@@ -1,13 +1,9 @@
 package com.keyflux
 
-import android.content.ContentValues
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
 import java.util.Locale
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /**
  * Centralizes all preference management: loading from SharedPreferences,
@@ -28,6 +24,15 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
             val days = prefsMap["keyflux_clip_days"] as? Int ?: 3
             if (days <= 0) return -1L
             return days.toLong() * 1000 * 60 * 60 * 24
+        }
+
+        /** Local Gboard storage is authoritative; the provider is migration-only. */
+        fun mergePreferenceMaps(
+            local: Map<String, Any>,
+            provider: Map<String, Any>
+        ): HashMap<String, Any> = HashMap<String, Any>().apply {
+            putAll(provider)
+            putAll(local)
         }
 
         fun detectSensitiveText(text: String): Boolean {
@@ -59,6 +64,7 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
         }
     }
 
+    @Volatile
     internal var prefsMap = HashMap<String, Any>()
 
     // --- SharedPreferences helpers ---
@@ -66,10 +72,12 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
     internal fun getSafeSharedPreferences(context: Context, name: String): SharedPreferences {
         val safeContext = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             val de = context.createDeviceProtectedStorageContext()
-            try {
-                de.moveSharedPreferencesFrom(context, name)
-            } catch (e: Exception) {
-                plugin.log("Failed to migrate old preferences: ${e.message}")
+            if (!context.isDeviceProtectedStorage) {
+                try {
+                    de.moveSharedPreferencesFrom(context, name)
+                } catch (e: Exception) {
+                    plugin.log("Failed to migrate old preferences: ${e.message}")
+                }
             }
             de
         } else {
@@ -78,10 +86,11 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
         return safeContext.getSharedPreferences(name, Context.MODE_PRIVATE)
     }
 
+    @Synchronized
     internal fun loadPreferences(context: Context) {
         try {
             val sp = getSafeSharedPreferences(context, "keyflux_prefs")
-            val newMap = HashMap<String, Any>()
+            val localMap = HashMap<String, Any>()
             for ((key, value) in sp.all) {
                 if (key.endsWith("_type")) continue
                 if (value != null) {
@@ -106,40 +115,52 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
                         is Float -> value
                         else -> value
                     }
-                    newMap[key] = typedVal
+                    localMap[key] = typedVal
                 }
             }
-            try {
-                val uri = Uri.parse("content://com.keyflux.provider/settings")
-                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val keyIndex = cursor.getColumnIndex("key")
-                    val valueIndex = cursor.getColumnIndex("value")
-                    val typeIndex = cursor.getColumnIndex("type")
-                    if (keyIndex != -1 && valueIndex != -1 && typeIndex != -1) {
-                        while (cursor.moveToNext()) {
-                            val key = cursor.getString(keyIndex) ?: continue
-                            val valStr = cursor.getString(valueIndex) ?: ""
-                            val type = cursor.getString(typeIndex) ?: "string"
-                            val typedVal: Any = when (type) {
-                                "boolean" -> valStr.toBoolean()
-                                "int" -> valStr.toIntOrNull() ?: 0
-                                "long" -> valStr.toLongOrNull() ?: 0L
-                                "float" -> valStr.toFloatOrNull() ?: 0f
-                                else -> valStr
-                            }
-                            newMap[key] = typedVal
-                            val encryptedVal = CryptoHelper.encrypt(valStr)
-                            sp.edit().apply {
-                                putString(key, encryptedVal)
-                                putString(key + "_type", type)
-                                apply()
+            val providerMap = HashMap<String, Any>()
+            val hasLocalKeyFluxValues = localMap.keys.any { it.startsWith("keyflux_") }
+            if (!hasLocalKeyFluxValues) {
+                try {
+                    val uri = Uri.parse("content://com.keyflux.provider/settings")
+                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val keyIndex = cursor.getColumnIndex("key")
+                        val valueIndex = cursor.getColumnIndex("value")
+                        val typeIndex = cursor.getColumnIndex("type")
+                        if (keyIndex != -1 && valueIndex != -1 && typeIndex != -1) {
+                            while (cursor.moveToNext()) {
+                                val key = cursor.getString(keyIndex) ?: continue
+                                val valStr = cursor.getString(valueIndex) ?: ""
+                                val type = cursor.getString(typeIndex) ?: "string"
+                                val typedVal: Any = when (type) {
+                                    "boolean" -> valStr.toBoolean()
+                                    "int" -> valStr.toIntOrNull() ?: 0
+                                    "long" -> valStr.toLongOrNull() ?: 0L
+                                    "float" -> valStr.toFloatOrNull() ?: 0f
+                                    else -> valStr
+                                }
+                                providerMap[key] = typedVal
                             }
                         }
                     }
+                } catch (e: Exception) {
+                    plugin.log("ContentProvider settings query skipped: ${e.message}")
                 }
-            } catch (e: Exception) {
-                plugin.log("ContentProvider settings query skipped: ${e.message}")
             }
+            val missingProviderValues = providerMap.filterKeys { it !in localMap }
+            if (missingProviderValues.isNotEmpty()) {
+                val editor = sp.edit()
+                for ((key, value) in missingProviderValues) {
+                    val type = valueType(value)
+                    editor.putString(key, CryptoHelper.encrypt(value.toString()))
+                    editor.putString(key + "_type", type)
+                }
+                if (!editor.commit()) {
+                    plugin.logAlways("Failed to commit migrated provider preferences")
+                }
+            }
+
+            val newMap = mergePreferenceMaps(localMap, providerMap)
             prefsMap = newMap
             plugin.log("Preferences loaded successfully: ${newMap.size} items")
         } catch (t: Throwable) {
@@ -147,62 +168,34 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
         }
     }
 
-    private var contentObserver: android.database.ContentObserver? = null
-
-    internal fun registerSettingsObserver(context: Context) {
-        if (contentObserver != null) return
-        try {
-            val handler = android.os.Handler(android.os.Looper.getMainLooper())
-            contentObserver = object : android.database.ContentObserver(handler) {
-                override fun onChange(selfChange: Boolean, uri: Uri?) {
-                    plugin.log("Settings changed in provider, reloading preferences...")
-                    CoroutineScope(Dispatchers.Default).launch {
-                        loadPreferences(context)
-                    }
-                }
-            }
-            context.contentResolver.registerContentObserver(
-                Uri.parse("content://com.keyflux.provider/settings"),
-                true,
-                contentObserver!!
-            )
-            plugin.log("ContentObserver registered successfully")
-        } catch (e: Exception) {
-            plugin.log("Failed to register ContentObserver: ${e.message}")
-        }
-    }
-
+    @Synchronized
     internal fun savePreferenceToProvider(context: Context, key: String, value: Any) {
         try {
             val sp = getSafeSharedPreferences(context, "keyflux_prefs")
-            val type = when (value) {
-                is Boolean -> "boolean"
-                is Int -> "int"
-                is Long -> "long"
-                is Float -> "float"
-                else -> "string"
-            }
+            val type = valueType(value)
             val encryptedVal = CryptoHelper.encrypt(value.toString())
-            sp.edit().apply {
+            val committed = sp.edit().run {
                 putString(key, encryptedVal)
                 putString(key + "_type", type)
-                apply()
+                commit()
             }
-            try {
-                val uri = Uri.parse("content://com.keyflux.provider/settings")
-                val cv = ContentValues().apply {
-                    put("key", key)
-                    put("value", value.toString())
-                    put("type", type)
-                }
-                context.contentResolver.insert(uri, cv)
-            } catch (e: Exception) {
-                plugin.log("ContentProvider settings insert skipped: ${e.message}")
+            if (!committed) {
+                throw IllegalStateException("SharedPreferences commit returned false")
             }
+
+            prefsMap = HashMap(prefsMap).apply { put(key, value) }
             plugin.log("Saved preference: $key = $value")
         } catch (t: Throwable) {
             plugin.logAlways("Failed to save preference: ${t.message}")
         }
+    }
+
+    private fun valueType(value: Any): String = when (value) {
+        is Boolean -> "boolean"
+        is Int -> "int"
+        is Long -> "long"
+        is Float -> "float"
+        else -> "string"
     }
 
     // --- Typed preference getters (delegate to companion) ---
@@ -214,7 +207,7 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
         get() = resolveClipboardTextTime(prefsMap)
 
     internal val logSwitch: Boolean
-        get() = true
+        get() = prefsMap["keyflux_log_switch"] as? Boolean ?: false
 
     internal val enableAi: Boolean
         get() = prefsMap["keyflux_enable_ai"] as? Boolean ?: false
@@ -245,6 +238,9 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
 
     internal val enablePrivacy: Boolean
         get() = prefsMap["keyflux_enable_privacy"] as? Boolean ?: false
+
+    internal val enableChineseLearning: Boolean
+        get() = prefsMap["keyflux_enable_chinese_learning"] as? Boolean ?: false
 
     internal val secureClipboard: Boolean
         get() = prefsMap["keyflux_secure_clipboard"] as? Boolean ?: false

@@ -22,6 +22,12 @@ It focuses on exposing selected hidden or experimental Gboard options, improving
   * Supports longer retention behavior where compatible.
   * Designed not to log clipboard contents or copied sensitive text.
 
+* **Chinese Personalization**
+
+  * Enables Gboard's on-device Chinese training cache on supported versions.
+  * Keeps correction storage available and avoids forced user-history decay.
+  * Can be disabled independently when local learning is not desired.
+
 * **Gboard Settings Integration**
 
   * Injects KeyFlux options into supported Gboard settings screens.

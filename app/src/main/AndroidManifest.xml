@@ -28,8 +28,7 @@
         <provider
             android:name=".SettingsProvider"
             android:authorities="com.keyflux.provider"
-            android:exported="true"
-            android:singleUser="true" />
+            android:exported="true" />
 
     </application>
 

@@ -66,7 +66,7 @@ class SettingsProvider : ContentProvider() {
             sp.edit().apply {
                 putString(key, encryptedVal)
                 putString(key + "_type", type)
-                apply()
+                commit()
             }
             try {
                 context.contentResolver.notifyChange(uri, null)
@@ -80,7 +80,7 @@ class SettingsProvider : ContentProvider() {
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
         val context = context ?: return 0
         val sp = context.getSharedPreferences("keyflux_shared_prefs", Context.MODE_PRIVATE)
-        sp.edit().clear().apply()
+        sp.edit().clear().commit()
         try {
             context.contentResolver.notifyChange(uri, null)
         } catch (e: Exception) {}

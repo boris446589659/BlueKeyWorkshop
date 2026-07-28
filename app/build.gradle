@@ -8,13 +8,14 @@ plugins {
 android {
     namespace 'com.keyflux'
     compileSdk 36
+    buildToolsVersion '36.1.0'
 
     defaultConfig {
         applicationId "com.keyflux"
         minSdk 24
         targetSdk 37
-        versionCode 7
-        versionName "1.0.4-diagnostic"
+        versionCode 8
+        versionName "1.1.0-beta-compat"
     }
 
     buildFeatures {
