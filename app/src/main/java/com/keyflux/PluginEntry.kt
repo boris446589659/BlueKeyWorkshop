@@ -55,6 +55,7 @@ class PluginEntry : IXposedHookLoadPackage {
             "keyflux_enable_multilingual",
             "keyflux_metered_downloads", "keyflux_enable_floating",
             "keyflux_enable_access_point", "keyflux_enable_amoled",
+            "keyflux_enable_custom_theme",
             "keyflux_enable_grammar", "keyflux_enable_ai",
             "keyflux_enable_chinese_learning",
             "keyflux_secure_clipboard",
@@ -73,6 +74,10 @@ class PluginEntry : IXposedHookLoadPackage {
             "keyflux_enable_clipboard_chips",
             "keyflux_enable_tflite_engine",
             "keyflux_enable_fast_access"
+        )
+
+        val INJECTED_THEME_ACTION_KEYS = listOf(
+            "keyflux_theme_editor"
         )
 
         /** Keys that appear at the very bottom after all sections. */
@@ -136,6 +141,7 @@ class PluginEntry : IXposedHookLoadPackage {
     internal val enableAccessPoint: Boolean get() = prefs.enableAccessPoint
     internal val meteredDownloads: Boolean get() = prefs.meteredDownloads
     internal val enableAmoled: Boolean get() = prefs.enableAmoled
+    internal val enableCustomTheme: Boolean get() = prefs.enableCustomTheme
     internal val forceIncognito: Boolean get() = prefs.forceIncognito
     internal val enablePrivacy: Boolean get() = prefs.enablePrivacy
     internal val enableChineseLearning: Boolean get() = prefs.enableChineseLearning
@@ -152,6 +158,11 @@ class PluginEntry : IXposedHookLoadPackage {
     internal fun loadPreferences(context: Context) = prefs.loadPreferences(context)
     internal fun savePreferenceToProvider(context: Context, key: String, value: Any) =
         prefs.savePreferenceToProvider(context, key, value)
+
+    internal fun savePreferences(context: Context, values: Map<String, Any>): Boolean =
+        prefs.savePreferences(context, values)
+
+    internal fun themePalette(dark: Boolean): ThemePalette = prefs.themePalette(dark)
 
     internal fun isSensitiveText(text: String) = prefs.isSensitiveText(text)
 
@@ -395,7 +406,12 @@ class PluginEntry : IXposedHookLoadPackage {
 
     // --- Color override (used by ThemeHooker) ---
 
-    internal fun overrideColor(res: Resources, id: Int, originalColor: Int): Int? {
+    internal fun overrideColor(
+        res: Resources,
+        id: Int,
+        originalColor: Int,
+        isDarkMode: Boolean = true
+    ): Int? {
         try {
             val entryName = runCatching { res.getResourceEntryName(id) }.getOrNull() ?: return null
             val packageName = runCatching { res.getResourcePackageName(id) }.getOrNull() ?: ""
@@ -404,17 +420,34 @@ class PluginEntry : IXposedHookLoadPackage {
                 log("overrideColor check: pkg=$packageName name=$entryName color=0x${Integer.toHexString(originalColor)}")
             }
 
-            if (packageName == "android" && entryName.startsWith("system_surface_container") && !entryName.contains("high")) {
+            if (enableCustomTheme) {
+                val palette = themePalette(isDarkMode)
+                val role = ThemePalette.classifyResourceColor(originalColor, isDarkMode)
+                if (role != null && !palette.containsRgb(originalColor)) {
+                    return ThemePalette.applyConfiguredAlpha(originalColor, palette.color(role))
+                }
+                if (packageName == "android" && entryName.startsWith("system_surface_container")) {
+                    return ThemePalette.applyConfiguredAlpha(originalColor, palette.background)
+                }
+                if (packageName == "android" && (entryName == "colorBackground" || entryName == "background_dark")) {
+                    return ThemePalette.applyConfiguredAlpha(originalColor, palette.background)
+                }
+                if (packageName == "android" && entryName.startsWith("system_accent")) {
+                    return ThemePalette.applyConfiguredAlpha(originalColor, palette.accent)
+                }
+            }
+
+            if (enableAmoled && isDarkMode && packageName == "android" && entryName.startsWith("system_surface_container") && !entryName.contains("high")) {
                 if (logSwitch) log("Overriding system color $entryName to black")
                 return 0xFF000000.toInt()
             }
 
-            if (packageName == "android" && (entryName == "colorBackground" || entryName == "background_dark")) {
+            if (enableAmoled && isDarkMode && packageName == "android" && (entryName == "colorBackground" || entryName == "background_dark")) {
                 if (logSwitch) log("Overriding system background $entryName to black")
                 return 0xFF000000.toInt()
             }
 
-            if (packageName == PACKAGE_NAME && entryName == "0_resource_name_obfuscated") {
+            if (enableAmoled && isDarkMode && packageName == PACKAGE_NAME && entryName == "0_resource_name_obfuscated") {
                 val hexColor = String.format("#%06X", 0xFFFFFF and originalColor)
                 if (hexColor == "#202124" || hexColor == "#131314" || hexColor == "#1F1F1F" ||
                     hexColor == "#1C1B1F" || hexColor == "#171717" || hexColor == "#2C2C2C" ||
@@ -522,7 +555,7 @@ class PluginEntry : IXposedHookLoadPackage {
                         val alreadyInjected = prefUI.findPreference(
                             screen,
                             "keyflux_settings_category"
-                        ) != null || injectedScreens.containsKey(screen)
+                        ) != null
 
                         if (!shouldInjectSettings(fragment.javaClass.name, hasMainMarker, alreadyInjected)) return
 
@@ -530,8 +563,16 @@ class PluginEntry : IXposedHookLoadPackage {
                             if (injectedScreens.containsKey(screen)) return
                             injectedScreens[screen] = true
                         }
-                        injectKeyFluxSettings(screen, context, classLoader, preferenceGroupClass)
-                        logAlways("Injected KeyFlux settings once into ${fragment.javaClass.name}")
+                        try {
+                            injectKeyFluxSettings(screen, context, classLoader, preferenceGroupClass)
+                            logAlways("Injected KeyFlux settings into ${fragment.javaClass.name}")
+                        } finally {
+                            // Gboard may clear and rebuild this PreferenceScreen when a child
+                            // surface closes. Keep this map only as an in-flight reentry guard.
+                            synchronized(injectedScreens) {
+                                injectedScreens.remove(screen)
+                            }
+                        }
                     } catch (error: Throwable) {
                         logAlways("Error injecting KeyFlux settings: ${error.message}")
                     }
@@ -735,6 +776,11 @@ class PluginEntry : IXposedHookLoadPackage {
                 "keyflux_enable_tflite_engine",
                 "keyflux_enable_fast_access"
             )
+            val themeFeature = key in setOf(
+                "keyflux_enable_amoled",
+                "keyflux_enable_custom_theme",
+                "keyflux_theme_editor"
+            )
 
             when {
                 clipboardFeature && failedHooks.contains("ClipboardHooker") -> {
@@ -744,7 +790,7 @@ class PluginEntry : IXposedHookLoadPackage {
                         Localization.getString("keyflux_feature_unavailable_clipboard")
                     )
                 }
-                key == "keyflux_enable_amoled" && failedHooks.contains("ThemeHooker") -> {
+                themeFeature && failedHooks.contains("ThemeHooker") -> {
                     prefUI.setPreferenceEnabled(preference, false)
                     prefUI.setPreferenceSummary(
                         preference,
@@ -817,8 +863,7 @@ class PluginEntry : IXposedHookLoadPackage {
             fun rawValue(): String =
                 (prefsMap[key] as? Number)?.toString() ?: (prefsMap[key] as? String) ?: defaultValue
 
-            fun displayValue(): String {
-                val raw = rawValue()
+            fun displayValue(raw: String = rawValue()): String {
                 if (key != "keyflux_clip_days") return raw
                 val days = raw.toIntOrNull() ?: defaultValue.toInt()
                 return if (days <= 0) {
@@ -855,27 +900,83 @@ class PluginEntry : IXposedHookLoadPackage {
                         log("Cannot show editor for $key: fragment context has no Activity")
                         return@newProxyInstance true
                     }
-                    val input = android.widget.EditText(activity).apply {
-                        setText(rawValue())
-                        inputType = android.text.InputType.TYPE_CLASS_NUMBER
-                        setSelection(text.length)
-                    }
-                    android.app.AlertDialog.Builder(activity)
-                        .setTitle(title)
-                        .setView(input)
-                        .setPositiveButton(android.R.string.ok) { _, _ ->
-                            val value = input.text.toString().toIntOrNull() ?: defaultValue.toInt()
+                    SettingsValueEditor.show(
+                        activity = activity,
+                        title = title,
+                        value = rawValue(),
+                        defaultValue = defaultValue.toInt(),
+                        minimum = if (key == "keyflux_clip_days") 0 else 1,
+                        maximum = if (key == "keyflux_clip_days") 365 else 100,
+                        valueLabel = { selected -> displayValue(selected.toString()) }
+                    ) { value ->
                             savePreferenceToProvider(context, key, value)
                             prefsMap[key] = value
                             updateSummary()
-                        }
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .show()
+                    }
                     true
                 }
             }
             prefUI.setOnPreferenceClickListener(preference, listener)
             checkCompatibilityAndDisable(preference, key)
+            return preference
+        }
+
+        fun createThemeEditorPreference(): Any {
+            val preference = XposedHelpers.newInstance(preferenceClass, context)
+            val title = Localization.getString("keyflux_theme_editor_title")
+            val summaryTemplate = Localization.getString("keyflux_theme_editor_summary")
+            prefUI.setPreferenceKey(preference, "keyflux_theme_editor")
+            prefUI.setPreferenceTitle(preference, title)
+            prefUI.setPreferencePersistent(preference, false)
+            prefUI.setIconSpaceReserved(preference, false)
+
+            fun summary(): String {
+                val light = ThemePalette.fromPreferences(prefsMap, ThemeMode.LIGHT)
+                val dark = ThemePalette.fromPreferences(prefsMap, ThemeMode.DARK)
+                return try {
+                    summaryTemplate.format(
+                        ThemePalette.formatColor(light.background),
+                        ThemePalette.formatColor(dark.background)
+                    )
+                } catch (_: Exception) {
+                    summaryTemplate
+                }
+            }
+            prefUI.setPreferenceSummary(preference, summary())
+
+            val listener = java.lang.reflect.Proxy.newProxyInstance(
+                classLoader,
+                arrayOf(clickListenerInterface)
+            ) { proxy, method, args ->
+                if (method.declaringClass == Any::class.java) {
+                    when (method.name) {
+                        "toString" -> "KeyFluxThemeEditorListener"
+                        "hashCode" -> System.identityHashCode(proxy)
+                        "equals" -> proxy === args?.getOrNull(0)
+                        else -> null
+                    }
+                } else {
+                    val activity = findActivity(context)
+                    if (activity == null) {
+                        log("Cannot show theme editor without an Activity")
+                        return@newProxyInstance true
+                    }
+                    ThemeEditorDialog.show(activity, prefsMap) { values ->
+                        if (savePreferences(context, values)) {
+                            prefUI.setPreferenceSummary(preference, summary())
+                        } else {
+                            android.widget.Toast.makeText(
+                                activity,
+                                Localization.getString("keyflux_theme_save_failed"),
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    true
+                }
+            }
+            prefUI.setOnPreferenceClickListener(preference, listener)
+            checkCompatibilityAndDisable(preference, "keyflux_theme_editor")
             return preference
         }
 
@@ -931,8 +1032,6 @@ class PluginEntry : IXposedHookLoadPackage {
         add(mainCategory, createSwitch("keyflux_enable_multilingual"))
         add(mainCategory, createSwitch("keyflux_metered_downloads"))
         add(mainCategory, createSwitch("keyflux_enable_floating"))
-        add(mainCategory, createSwitch("keyflux_enable_access_point"))
-        add(mainCategory, createSwitch("keyflux_enable_amoled"))
         add(mainCategory, createSwitch("keyflux_enable_grammar"))
         add(mainCategory, createSwitch("keyflux_enable_ai"))
         add(mainCategory, createSwitch("keyflux_enable_chinese_learning"))
@@ -943,6 +1042,15 @@ class PluginEntry : IXposedHookLoadPackage {
         add(mainCategory, createSwitch("keyflux_force_incognito"))
         add(mainCategory, createSwitch("keyflux_enable_privacy"))
         add(mainCategory, createSwitch("keyflux_log_switch"))
+
+        val themeCategory = createCategory(
+            "keyflux_theme_category",
+            "keyflux_theme_category_title"
+        )
+        add(themeCategory, createSwitch("keyflux_enable_access_point"))
+        add(themeCategory, createSwitch("keyflux_enable_amoled"))
+        add(themeCategory, createSwitch("keyflux_enable_custom_theme"))
+        add(themeCategory, createThemeEditorPreference())
 
         val forceStop = XposedHelpers.newInstance(preferenceClass, context)
         prefUI.setPreferenceKey(forceStop, "keyflux_force_stop_btn")

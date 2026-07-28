@@ -170,23 +170,31 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
 
     @Synchronized
     internal fun savePreferenceToProvider(context: Context, key: String, value: Any) {
+        savePreferences(context, mapOf(key to value))
+    }
+
+    /** Persist a related group in one commit so a theme can never be half-written. */
+    @Synchronized
+    internal fun savePreferences(context: Context, values: Map<String, Any>): Boolean {
         try {
             val sp = getSafeSharedPreferences(context, "keyflux_prefs")
-            val type = valueType(value)
-            val encryptedVal = CryptoHelper.encrypt(value.toString())
             val committed = sp.edit().run {
-                putString(key, encryptedVal)
-                putString(key + "_type", type)
+                for ((key, value) in values) {
+                    putString(key, CryptoHelper.encrypt(value.toString()))
+                    putString(key + "_type", valueType(value))
+                }
                 commit()
             }
             if (!committed) {
                 throw IllegalStateException("SharedPreferences commit returned false")
             }
 
-            prefsMap = HashMap(prefsMap).apply { put(key, value) }
-            plugin.log("Saved preference: $key = $value")
+            prefsMap = HashMap(prefsMap).apply { putAll(values) }
+            plugin.log("Saved ${values.size} preference(s)")
+            return true
         } catch (t: Throwable) {
             plugin.logAlways("Failed to save preference: ${t.message}")
+            return false
         }
     }
 
@@ -232,6 +240,14 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
 
     internal val enableAmoled: Boolean
         get() = prefsMap["keyflux_enable_amoled"] as? Boolean ?: false
+
+    internal val enableCustomTheme: Boolean
+        get() = prefsMap[ThemePalette.ENABLED_KEY] as? Boolean ?: false
+
+    internal fun themePalette(dark: Boolean): ThemePalette = ThemePalette.fromPreferences(
+        prefsMap,
+        if (dark) ThemeMode.DARK else ThemeMode.LIGHT
+    )
 
     internal val forceIncognito: Boolean
         get() = prefsMap["keyflux_force_incognito"] as? Boolean ?: false
