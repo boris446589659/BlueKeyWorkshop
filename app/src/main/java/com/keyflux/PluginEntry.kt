@@ -26,6 +26,7 @@ import java.lang.System.loadLibrary
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Main Xposed entry point for KeyFlux.
@@ -37,6 +38,7 @@ class PluginEntry : IXposedHookLoadPackage {
         const val SP_FILE_NAME = "KeyFluxPrefs"
         const val TAG = "xposed-KeyFlux-hook-"
         const val PACKAGE_NAME = "com.google.android.inputmethod.latin"
+        private const val MAX_COLOR_OVERRIDE_LOGS = 32
         val isInitialized = AtomicBoolean(false)
 
         /** Fragment class names that indicate the main Gboard settings screen. */
@@ -115,6 +117,8 @@ class PluginEntry : IXposedHookLoadPackage {
     internal val flagsOverride = FlagsOverrideManager(this)
     internal val prefUI = PreferenceUIHelper(this)
     private val injectedScreens = Collections.synchronizedMap(WeakHashMap<Any, Boolean>())
+    private val colorOverrideLogCount = AtomicInteger()
+    private val colorOverrideLimitNoted = AtomicBoolean(false)
 
     @Volatile
     internal var isCurrentFieldSecure: Boolean = false
@@ -176,6 +180,15 @@ class PluginEntry : IXposedHookLoadPackage {
 
     internal fun logAlways(str: String) {
         XposedBridge.log("$TAG$str")
+    }
+
+    private fun logColorOverride(str: String) {
+        if (!logSwitch) return
+        if (colorOverrideLogCount.incrementAndGet() <= MAX_COLOR_OVERRIDE_LOGS) {
+            log(str)
+        } else if (colorOverrideLimitNoted.compareAndSet(false, true)) {
+            log("Color override trace limit reached; further entries are suppressed for this process")
+        }
     }
 
     // --- Initialization ---
@@ -416,34 +429,35 @@ class PluginEntry : IXposedHookLoadPackage {
             val entryName = runCatching { res.getResourceEntryName(id) }.getOrNull() ?: return null
             val packageName = runCatching { res.getResourcePackageName(id) }.getOrNull() ?: ""
 
-            if (logSwitch) {
-                log("overrideColor check: pkg=$packageName name=$entryName color=0x${Integer.toHexString(originalColor)}")
-            }
-
             if (enableCustomTheme) {
                 val palette = themePalette(isDarkMode)
                 val role = ThemePalette.classifyResourceColor(originalColor, isDarkMode)
                 if (role != null && !palette.containsRgb(originalColor)) {
-                    return ThemePalette.applyConfiguredAlpha(originalColor, palette.color(role))
+                    val replacement = ThemePalette.applyConfiguredAlpha(originalColor, palette.color(role))
+                    logColorOverride("Custom theme mapped $entryName as $role")
+                    return replacement
                 }
                 if (packageName == "android" && entryName.startsWith("system_surface_container")) {
+                    logColorOverride("Custom theme mapped $entryName to the background color")
                     return ThemePalette.applyConfiguredAlpha(originalColor, palette.background)
                 }
                 if (packageName == "android" && (entryName == "colorBackground" || entryName == "background_dark")) {
+                    logColorOverride("Custom theme mapped $entryName to the background color")
                     return ThemePalette.applyConfiguredAlpha(originalColor, palette.background)
                 }
                 if (packageName == "android" && entryName.startsWith("system_accent")) {
+                    logColorOverride("Custom theme mapped $entryName to the accent color")
                     return ThemePalette.applyConfiguredAlpha(originalColor, palette.accent)
                 }
             }
 
             if (enableAmoled && isDarkMode && packageName == "android" && entryName.startsWith("system_surface_container") && !entryName.contains("high")) {
-                if (logSwitch) log("Overriding system color $entryName to black")
+                logColorOverride("AMOLED mapped $entryName to black")
                 return 0xFF000000.toInt()
             }
 
             if (enableAmoled && isDarkMode && packageName == "android" && (entryName == "colorBackground" || entryName == "background_dark")) {
-                if (logSwitch) log("Overriding system background $entryName to black")
+                logColorOverride("AMOLED mapped $entryName to black")
                 return 0xFF000000.toInt()
             }
 
@@ -452,7 +466,7 @@ class PluginEntry : IXposedHookLoadPackage {
                 if (hexColor == "#202124" || hexColor == "#131314" || hexColor == "#1F1F1F" ||
                     hexColor == "#1C1B1F" || hexColor == "#171717" || hexColor == "#2C2C2C" ||
                     hexColor == "#303030" || hexColor == "#18191A" || hexColor == "#282A2D") {
-                    if (logSwitch) log("Overriding Gboard obfuscated background color (original=$hexColor) to black")
+                    logColorOverride("AMOLED mapped Gboard background $hexColor to black")
                     return 0xFF000000.toInt()
                 }
             }
