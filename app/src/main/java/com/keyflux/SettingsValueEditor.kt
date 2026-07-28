@@ -119,16 +119,18 @@ internal object SettingsValueEditor {
         ).also { it.topMargin = SettingsPanel.dp(activity, 10) })
 
         dialog.setContentView(root)
-        dialog.setOnShowListener {
-            dialog.window?.apply {
-                setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
-                addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                attributes = attributes.apply { dimAmount = 0.58f }
-                setGravity(Gravity.CENTER)
-                val width = (activity.resources.displayMetrics.widthPixels - SettingsPanel.dp(activity, 40))
-                    .coerceAtMost(SettingsPanel.dp(activity, 520))
-                setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+        // Apply the window geometry before it is visible to avoid a default-size first frame.
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes = attributes.apply {
+                dimAmount = 0.58f
+                windowAnimations = 0
             }
+            setGravity(Gravity.CENTER)
+            val width = (activity.resources.displayMetrics.widthPixels - SettingsPanel.dp(activity, 40))
+                .coerceAtMost(SettingsPanel.dp(activity, 520))
+            setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         dialog.show()
     }

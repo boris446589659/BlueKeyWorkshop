@@ -217,6 +217,9 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
     internal val logSwitch: Boolean
         get() = prefsMap["keyflux_log_switch"] as? Boolean ?: false
 
+    internal val logLevel: LogLevel
+        get() = LogLevel.fromStored(prefsMap["keyflux_log_level"], logSwitch)
+
     internal val enableAi: Boolean
         get() = prefsMap["keyflux_enable_ai"] as? Boolean ?: false
 

@@ -301,6 +301,12 @@ object Localization {
             "days" to "gün"
         ),
         "zh" to mapOf(
+            "keyflux_log_level_title" to "日志等级",
+            "keyflux_log_level_summary" to "记录 %s 及以上等级的模块日志",
+            "keyflux_log_level_debug" to "调试",
+            "keyflux_log_level_info" to "信息",
+            "keyflux_log_level_warn" to "警告",
+            "keyflux_log_level_error" to "错误",
             "keyflux_category_title" to "KeyFlux 设置",
             "keyflux_enable_ai_title" to "智能输入功能",
             "keyflux_enable_ai_summary" to "启用智能撰写和内联建议等实验功能",
@@ -387,6 +393,12 @@ object Localization {
             "keyflux_feature_unavailable_theme" to "当前 Gboard 版本不支持主题增强。"
         ),
         "en" to mapOf(
+            "keyflux_log_level_title" to "Log level",
+            "keyflux_log_level_summary" to "Record module logs at %s and above",
+            "keyflux_log_level_debug" to "Debug",
+            "keyflux_log_level_info" to "Info",
+            "keyflux_log_level_warn" to "Warning",
+            "keyflux_log_level_error" to "Error",
             "keyflux_category_title" to "KeyFlux Settings",
             "keyflux_enable_ai_title" to "Smart Typing Features",
             "keyflux_enable_ai_summary" to "Enable Smart Compose, inline suggestions, etc.",

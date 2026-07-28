@@ -62,8 +62,7 @@ class PluginEntry : IXposedHookLoadPackage {
             "keyflux_enable_chinese_learning",
             "keyflux_secure_clipboard",
             "keyflux_enable_emoji_kitchen",
-            "keyflux_force_incognito", "keyflux_enable_privacy",
-            "keyflux_log_switch"
+            "keyflux_force_incognito", "keyflux_enable_privacy"
         )
 
         val INJECTED_INPUT_KEYS = listOf(
@@ -80,6 +79,10 @@ class PluginEntry : IXposedHookLoadPackage {
 
         val INJECTED_THEME_ACTION_KEYS = listOf(
             "keyflux_theme_editor"
+        )
+
+        val INJECTED_LOG_ACTION_KEYS = listOf(
+            "keyflux_log_level"
         )
 
         /** Keys that appear at the very bottom after all sections. */
@@ -137,6 +140,7 @@ class PluginEntry : IXposedHookLoadPackage {
     internal val clipboardTextSize: Int get() = prefs.clipboardTextSize
     internal val clipboardTextTime: Long get() = prefs.clipboardTextTime
     internal val logSwitch: Boolean get() = prefs.logSwitch
+    internal val logLevel: LogLevel get() = prefs.logLevel
     internal val enableAi: Boolean get() = prefs.enableAi
     internal val enableGrammar: Boolean get() = prefs.enableGrammar
     internal val enableMultilingual: Boolean get() = prefs.enableMultilingual
@@ -172,18 +176,36 @@ class PluginEntry : IXposedHookLoadPackage {
 
     // --- Logging ---
 
-    internal fun log(str: String) {
-        if (logSwitch) {
-            XposedBridge.log("$TAG$str")
+    /** Detailed per-hook diagnostics. Shown only when the Debug level is selected. */
+    internal fun log(str: String) = logAt(LogLevel.DEBUG, str)
+
+    internal fun logInfo(str: String) = logAt(LogLevel.INFO, str)
+
+    internal fun logWarning(str: String) = logAt(LogLevel.WARN, str)
+
+    internal fun logError(str: String) = logAt(LogLevel.ERROR, str)
+
+    /** Compatibility bridge for existing important log sites. */
+    internal fun logAlways(str: String) = logAt(inferLogLevel(str), str)
+
+    private fun logAt(level: LogLevel, str: String) {
+        if (logLevel.includes(level)) {
+            XposedBridge.log("$TAG[${level.label}] $str")
         }
     }
 
-    internal fun logAlways(str: String) {
-        XposedBridge.log("$TAG$str")
+    private fun inferLogLevel(str: String): LogLevel {
+        val message = str.lowercase()
+        return when {
+            "error" in message || "failed" in message || "crash" in message || "exception" in message -> LogLevel.ERROR
+            "disabled" in message || "skipped" in message || "deferred" in message ||
+                "not found" in message || "rejected" in message || "no methods" in message -> LogLevel.WARN
+            else -> LogLevel.INFO
+        }
     }
 
     private fun logColorOverride(str: String) {
-        if (!logSwitch) return
+        if (!logLevel.includes(LogLevel.DEBUG)) return
         if (colorOverrideLogCount.incrementAndGet() <= MAX_COLOR_OVERRIDE_LOGS) {
             log(str)
         } else if (colorOverrideLimitNoted.compareAndSet(false, true)) {
@@ -335,7 +357,7 @@ class PluginEntry : IXposedHookLoadPackage {
             logAlways("Plugin loaded: package=$packageName, process=$processName, moduleVersion=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             logAlways("Device: ${CompatibilityManager.manufacturer} ${android.os.Build.MODEL}, Android ${CompatibilityManager.androidVersion} (API ${CompatibilityManager.sdkInt})")
             if (CompatibilityManager.hasAggressiveOem) logAlways("OEM detected: aggressive process management (${CompatibilityManager.manufacturer})")
-            logAlways("Initial config: logSwitch=$logSwitch, enableAi=$enableAi, clipboardTextSize=$clipboardTextSize")
+            logInfo("Initial config: logLevel=${logLevel.storedValue}, enableAi=$enableAi, clipboardTextSize=$clipboardTextSize")
 
             // Primary: ContextWrapper#attachBaseContext
             try {
@@ -935,6 +957,71 @@ class PluginEntry : IXposedHookLoadPackage {
             return preference
         }
 
+        fun createLogLevelPreference(): Any {
+            val key = "keyflux_log_level"
+            val preference = XposedHelpers.newInstance(preferenceClass, context)
+            val title = Localization.getString("keyflux_log_level_title")
+            val summaryTemplate = Localization.getString("keyflux_log_level_summary")
+            val levels = LogLevel.values()
+            prefUI.setPreferenceKey(preference, key)
+            prefUI.setPreferenceTitle(preference, title)
+            prefUI.setPreferencePersistent(preference, false)
+            prefUI.setIconSpaceReserved(preference, false)
+
+            fun selectedLevel(): LogLevel = LogLevel.fromStored(
+                prefsMap[key],
+                prefsMap["keyflux_log_switch"] as? Boolean ?: false
+            )
+
+            fun levelName(level: LogLevel): String =
+                Localization.getString("keyflux_log_level_${level.storedValue}")
+
+            fun updateSummary() {
+                val summary = try {
+                    summaryTemplate.format(levelName(selectedLevel()))
+                } catch (_: Exception) {
+                    levelName(selectedLevel())
+                }
+                prefUI.setPreferenceSummary(preference, summary)
+            }
+            updateSummary()
+
+            val listener = java.lang.reflect.Proxy.newProxyInstance(
+                classLoader,
+                arrayOf(clickListenerInterface)
+            ) { proxy, method, args ->
+                if (method.declaringClass == Any::class.java) {
+                    when (method.name) {
+                        "toString" -> "KeyFluxLogLevelListener"
+                        "hashCode" -> System.identityHashCode(proxy)
+                        "equals" -> proxy === args?.getOrNull(0)
+                        else -> null
+                    }
+                } else {
+                    val activity = findActivity(context)
+                    if (activity == null) {
+                        logWarning("Cannot show log level selector: fragment context has no Activity")
+                        return@newProxyInstance true
+                    }
+                    val labels = levels.map(::levelName).toTypedArray()
+                    val selectedIndex = levels.indexOf(selectedLevel()).coerceAtLeast(0)
+                    android.app.AlertDialog.Builder(activity)
+                        .setTitle(title)
+                        .setSingleChoiceItems(labels, selectedIndex) { dialog, which ->
+                            val level = levels[which]
+                            savePreferenceToProvider(context, key, level.storedValue)
+                            prefsMap[key] = level.storedValue
+                            updateSummary()
+                            dialog.dismiss()
+                        }
+                        .show()
+                    true
+                }
+            }
+            prefUI.setOnPreferenceClickListener(preference, listener)
+            return preference
+        }
+
         fun createThemeEditorPreference(): Any {
             val preference = XposedHelpers.newInstance(preferenceClass, context)
             val title = Localization.getString("keyflux_theme_editor_title")
@@ -1055,7 +1142,7 @@ class PluginEntry : IXposedHookLoadPackage {
         add(mainCategory, createSwitch("keyflux_enable_emoji_kitchen"))
         add(mainCategory, createSwitch("keyflux_force_incognito"))
         add(mainCategory, createSwitch("keyflux_enable_privacy"))
-        add(mainCategory, createSwitch("keyflux_log_switch"))
+        add(mainCategory, createLogLevelPreference())
 
         val themeCategory = createCategory(
             "keyflux_theme_category",

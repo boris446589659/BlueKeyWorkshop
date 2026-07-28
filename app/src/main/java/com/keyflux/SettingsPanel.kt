@@ -33,10 +33,6 @@ internal object SettingsPanel {
     ) {
         fun show() {
             dialog.show()
-            dialog.window?.apply {
-                setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                setGravity(Gravity.FILL)
-            }
         }
     }
 
@@ -110,25 +106,25 @@ internal object SettingsPanel {
         ))
 
         dialog.setContentView(root)
-        dialog.setOnShowListener {
-            dialog.window?.apply {
-                setBackgroundDrawable(ColorDrawable(colors.surface))
-                clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                setGravity(Gravity.FILL)
-                addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-                statusBarColor = colors.surface
-                navigationBarColor = colors.surface
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    var flags = 0
-                    if (colors.surface == LIGHT_SURFACE) {
-                        flags = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-                        }
+        // Configure before show so the first rendered frame is already full screen.
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(colors.surface))
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setGravity(Gravity.FILL)
+            addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+            attributes = attributes.apply { windowAnimations = 0 }
+            statusBarColor = colors.surface
+            navigationBarColor = colors.surface
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                var flags = 0
+                if (colors.surface == LIGHT_SURFACE) {
+                    flags = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
                     }
-                    decorView.systemUiVisibility = flags
                 }
+                decorView.systemUiVisibility = flags
             }
         }
         return Handle(dialog, content, footer, colors)

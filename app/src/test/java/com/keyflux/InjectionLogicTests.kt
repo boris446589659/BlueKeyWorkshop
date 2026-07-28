@@ -124,6 +124,12 @@ class InjectionLogicTests {
         }
     }
 
+    @Test fun `all log action keys have keyflux prefix`() {
+        for (key in PluginEntry.INJECTED_LOG_ACTION_KEYS) {
+            assertTrue("Log action key '$key' should start with 'keyflux_'", key.startsWith("keyflux_"))
+        }
+    }
+
     @Test fun `multilingual key is the first switch key (used as injection marker)`() {
         assertEquals("keyflux_enable_multilingual", PluginEntry.INJECTED_SWITCH_KEYS.first())
     }
@@ -132,6 +138,8 @@ class InjectionLogicTests {
         val allKeys = PluginEntry.INJECTED_SWITCH_KEYS +
                        PluginEntry.INJECTED_INPUT_KEYS +
                        PluginEntry.INJECTED_EXPERIMENTAL_KEYS +
+                       PluginEntry.INJECTED_THEME_ACTION_KEYS +
+                       PluginEntry.INJECTED_LOG_ACTION_KEYS +
                        PluginEntry.BOTTOM_KEYS
         assertEquals("Should have no duplicate keys across all injected lists", allKeys.size, allKeys.toSet().size)
     }
@@ -173,7 +181,7 @@ class InjectionLogicTests {
     // --- Preference key completeness ---
 
     @Test fun `all switch preferences are covered`() {
-        assertEquals("Should have exactly 14 switch preferences", 14, PluginEntry.INJECTED_SWITCH_KEYS.size)
+        assertEquals("Should have exactly 13 switch preferences", 13, PluginEntry.INJECTED_SWITCH_KEYS.size)
         assertTrue(PluginEntry.INJECTED_SWITCH_KEYS.contains("keyflux_enable_chinese_learning"))
         assertTrue(PluginEntry.INJECTED_SWITCH_KEYS.contains("keyflux_enable_custom_theme"))
     }
@@ -190,8 +198,8 @@ class InjectionLogicTests {
         assertTrue(PluginEntry.BOTTOM_KEYS.contains("keyflux_force_stop_btn"))
     }
 
-    @Test fun `log switch is in switch keys`() {
-        assertTrue(PluginEntry.INJECTED_SWITCH_KEYS.contains("keyflux_log_switch"))
+    @Test fun `log level selector is an injected action`() {
+        assertTrue(PluginEntry.INJECTED_LOG_ACTION_KEYS.contains("keyflux_log_level"))
     }
 
     @Test fun `clipboard input keys match preferences manager keys`() {
