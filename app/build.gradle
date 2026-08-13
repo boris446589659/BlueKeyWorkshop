@@ -14,8 +14,8 @@ android {
         applicationId "com.keyflux"
         minSdk 24
         targetSdk 37
-        versionCode 8
-        versionName "1.1.0-beta-compat"
+        versionCode 9
+        versionName "1.2.0-beta"
     }
 
     buildFeatures {
