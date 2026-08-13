@@ -68,12 +68,11 @@
 
 反馈问题时请附上 Android/ROM、Gboard 版本、蓝键工坊版本及已脱敏的 LSPosed 日志。
 
-## 上游与致谢
+## 贡献者与致谢
 
-- 上游项目：[NawafCode/KeyFlux](https://github.com/NawafCode/KeyFlux)
-- 原项目作者：[NawafCode](https://github.com/NawafCode)
-- 本 fork 维护：[Boris448](https://github.com/boris446589659)
-- 开发辅助：OpenAI Codex
+- [NawafCode](https://github.com/NawafCode)：上游 [KeyFlux](https://github.com/NawafCode/KeyFlux) 原作者。
+- [Boris448](https://github.com/boris446589659)：蓝键工坊开发与维护。
+- [OpenAI Codex](https://github.com/openai/codex)：代码实现、调试与验证辅助。
 
 ## 许可证
 
