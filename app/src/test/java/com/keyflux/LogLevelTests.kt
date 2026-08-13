@@ -28,4 +28,15 @@ class LogLevelTests {
         assertFalse(LogLevel.WARN.includes(LogLevel.INFO))
         assertFalse(LogLevel.ERROR.includes(LogLevel.WARN))
     }
+
+    @Test fun `diagnostic messages promote failures and warnings`() {
+        assertEquals(LogLevel.DEBUG, LogLevel.fromMessage("Preferences loaded", LogLevel.DEBUG))
+        assertEquals(LogLevel.INFO, LogLevel.fromMessage("Plugin loaded", LogLevel.INFO))
+        assertEquals(LogLevel.WARN, LogLevel.fromMessage("Clipboard hook skipped", LogLevel.DEBUG))
+        assertEquals(LogLevel.WARN, LogLevel.fromMessage("Runtime color handler unavailable", LogLevel.DEBUG))
+        assertEquals(LogLevel.ERROR, LogLevel.fromMessage("Runtime color handler unavailable: ClassNotFoundException", LogLevel.DEBUG))
+        assertEquals(LogLevel.ERROR, LogLevel.fromMessage("Error in query hook", LogLevel.DEBUG))
+        assertEquals(LogLevel.ERROR, LogLevel.fromMessage("Failed to load preferences", LogLevel.INFO))
+        assertEquals(LogLevel.ERROR, LogLevel.fromMessage("Failed because dependency is unavailable", LogLevel.DEBUG))
+    }
 }

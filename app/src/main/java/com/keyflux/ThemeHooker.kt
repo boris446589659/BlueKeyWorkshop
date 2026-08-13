@@ -158,7 +158,7 @@ object ThemeHooker {
             })
             logAlways("Hooked Gboard semantic style resolver ${resolverClass.name}#${method.name}")
         } catch (error: Throwable) {
-            log("Semantic style resolver unavailable: ${error.message}")
+            logDebug("Semantic style resolver candidate absent: ${error.message}")
         }
     }
 
@@ -168,6 +168,7 @@ object ThemeHooker {
      */
     private fun PluginEntry.hookRuntimeColorHandlers(classLoader: ClassLoader) {
         val handlerNames = listOf("apdy", "apep", "apet", "apff", "apec", "apei", "apee", "apek")
+        val hookedHandlers = ArrayList<String>()
         for (name in handlerNames) {
             try {
                 val handlerClass = XposedHelpers.findClass("defpackage.$name", classLoader)
@@ -178,11 +179,16 @@ object ThemeHooker {
                         replaceRecognizedColorStateLists(param.thisObject, view.resources.isDarkMode())
                     }
                 })
+                hookedHandlers.add(name)
             } catch (error: Throwable) {
-                log("Runtime color handler unavailable: $name: ${error.message}")
+                logDebug("Runtime color handler candidate absent: $name: ${error.message}")
             }
         }
-        logAlways("Hooked Gboard runtime key color handlers")
+        if (hookedHandlers.isEmpty()) {
+            logWarning("No version-specific runtime color handlers matched; using resource color hooks")
+        } else {
+            logInfo("Hooked ${hookedHandlers.size} Gboard runtime color handlers: ${hookedHandlers.joinToString()}")
+        }
     }
 
     private fun PluginEntry.applyStylePalette(

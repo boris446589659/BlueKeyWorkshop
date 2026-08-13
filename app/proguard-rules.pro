@@ -1,4 +1,4 @@
-# ProGuard rules for KeyFlux module
+# ProGuard rules for the BlueKey Workshop module
 -keepattributes SourceFile,LineNumberTable
 -dontwarn kotlin.jvm.internal.SourceDebugExtension
 -keep class com.keyflux.PluginEntry

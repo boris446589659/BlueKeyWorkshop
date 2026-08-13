@@ -23,5 +23,18 @@ internal enum class LogLevel(
             return values().firstOrNull { it.storedValue.equals(rawValue, ignoreCase = true) }
                 ?: if (legacyDebugEnabled) DEBUG else INFO
         }
+
+        fun fromMessage(message: String, defaultLevel: LogLevel): LogLevel {
+            val normalized = message.lowercase()
+            return when {
+                "error" in normalized || "failed" in normalized ||
+                    "crash" in normalized || "exception" in normalized -> ERROR
+                "disabled" in normalized || "skipped" in normalized ||
+                    "deferred" in normalized || "not found" in normalized ||
+                    "rejected" in normalized || "no methods" in normalized ||
+                    "cannot" in normalized || "unavailable" in normalized -> WARN
+                else -> defaultLevel
+            }
+        }
     }
 }

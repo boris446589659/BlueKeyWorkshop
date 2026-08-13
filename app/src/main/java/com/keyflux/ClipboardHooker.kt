@@ -5,15 +5,22 @@ import android.content.Context
 import android.database.Cursor
 import android.net.Uri
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.XposedHelpers.findAndHookMethod
-import org.luckypray.dexkit.DexKitBridge
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 object ClipboardHooker {
+
+    private val SENSITIVE_TEXT_COLUMNS = setOf("text", "html_text")
+    private const val ENABLE_PROVIDER_QUERY_OVERRIDES = false
+
+    internal fun containsSensitiveClipboardText(values: Map<String, String?>): Boolean =
+        values.any { (key, value) ->
+            key.lowercase(Locale.ROOT) in SENSITIVE_TEXT_COLUMNS &&
+                value != null && PreferencesManager.detectSensitiveText(value)
+        }
 
     /** Cached discovered class name to avoid re-running DexKit on subsequent hooks. */
     @Volatile
@@ -37,7 +44,11 @@ object ClipboardHooker {
      *
      * Falls back to hardcoded candidates if DexKit fails.
      */
-    private fun findClipboardProviderClass(classLoader: ClassLoader, log: (String) -> Unit): Class<*>? {
+    private fun findClipboardProviderClass(
+        plugin: PluginEntry,
+        classLoader: ClassLoader,
+        log: (String) -> Unit
+    ): Class<*>? {
         // Return cached result if available
         discoveredClassName?.let { name ->
             try {
@@ -51,7 +62,7 @@ object ClipboardHooker {
         }
 
         // Try DexKit discovery
-        val dexkitClass = findViaDexKit(classLoader, log)
+        val dexkitClass = findViaDexKit(plugin, classLoader, log)
         if (dexkitClass != null) return dexkitClass
 
         // Fallback: try hardcoded candidates
@@ -61,11 +72,10 @@ object ClipboardHooker {
     /**
      * Use DexKit to search for the clipboard ContentProvider dynamically.
      */
-    private fun findViaDexKit(classLoader: ClassLoader, log: (String) -> Unit): Class<*>? {
-        var bridge: DexKitBridge? = null
+    private fun findViaDexKit(plugin: PluginEntry, classLoader: ClassLoader, log: (String) -> Unit): Class<*>? =
+        plugin.withDexKitBridge(classLoader) bridgeBlock@ { bridge ->
         try {
-            bridge = DexKitBridge.create(classLoader, true)
-            log("DexKit bridge opened for clipboard discovery")
+            log("Using shared DexKit bridge for clipboard discovery")
 
             // Query 1: ContentProvider with "clip" string
             val result1 = try {
@@ -74,14 +84,17 @@ object ClipboardHooker {
                         superClass("android.content.ContentProvider")
                         addUsingString("clip")
                     }
-                }.firstOrNull()
+                }.let { results ->
+                    results.singleOrNull { it.name.contains("clipboard", ignoreCase = true) }
+                        ?: results.singleOrNull()
+                }
             } catch (t: Throwable) { null }
 
             if (result1 != null) {
                 val name = result1.name
                 discoveredClassName = name
                 log("DexKit found clipboard provider via 'clip' string: $name")
-                return XposedHelpers.findClass(name, classLoader)
+                return@bridgeBlock XposedHelpers.findClass(name, classLoader)
             }
 
             // Query 2: ContentProvider with "timestamp" string
@@ -91,14 +104,17 @@ object ClipboardHooker {
                         superClass("android.content.ContentProvider")
                         addUsingString("timestamp")
                     }
-                }.firstOrNull()
+                }.let { results ->
+                    results.singleOrNull { it.name.contains("clipboard", ignoreCase = true) }
+                        ?: results.singleOrNull()
+                }
             } catch (t: Throwable) { null }
 
             if (result2 != null) {
                 val name = result2.name
                 discoveredClassName = name
                 log("DexKit found clipboard provider via 'timestamp' string: $name")
-                return XposedHelpers.findClass(name, classLoader)
+                return@bridgeBlock XposedHelpers.findClass(name, classLoader)
             }
 
             // Query 3: ContentProvider with "content://" URI
@@ -108,7 +124,12 @@ object ClipboardHooker {
                         superClass("android.content.ContentProvider")
                         addUsingString("content://")
                     }
-                }.firstOrNull()
+                }.let { results ->
+                    results.singleOrNull {
+                        it.name.contains("clipboard", ignoreCase = true) ||
+                            it.name.contains("inputmethod", ignoreCase = true)
+                    } ?: results.singleOrNull()
+                }
             } catch (t: Throwable) { null }
 
             if (result3 != null) {
@@ -117,7 +138,7 @@ object ClipboardHooker {
                 if (name.contains("clip", ignoreCase = true) || name.contains("inputmethod", ignoreCase = true)) {
                     discoveredClassName = name
                     log("DexKit found clipboard provider via 'content://' URI: $name")
-                    return XposedHelpers.findClass(name, classLoader)
+                    return@bridgeBlock XposedHelpers.findClass(name, classLoader)
                 }
                 // Check if it has clipboard-specific string patterns
                 val hasClipboardStrings = try {
@@ -136,7 +157,7 @@ object ClipboardHooker {
                 if (hasClipboardStrings) {
                     discoveredClassName = name
                     log("DexKit found clipboard provider via 'content://' + timestamp+limit: $name")
-                    return XposedHelpers.findClass(name, classLoader)
+                    return@bridgeBlock XposedHelpers.findClass(name, classLoader)
                 }
             }
 
@@ -147,23 +168,24 @@ object ClipboardHooker {
                         superClass("android.content.ContentProvider")
                         addUsingString("inputmethod")
                     }
-                }.firstOrNull()
+                }.let { results ->
+                    results.singleOrNull { it.name.contains("clipboard", ignoreCase = true) }
+                        ?: results.singleOrNull()
+                }
             } catch (t: Throwable) { null }
 
             if (result4 != null) {
                 val name = result4.name
                 discoveredClassName = name
                 log("DexKit found clipboard provider via 'inputmethod' string: $name")
-                return XposedHelpers.findClass(name, classLoader)
+                return@bridgeBlock XposedHelpers.findClass(name, classLoader)
             }
 
             log("DexKit clipboard discovery: no match found across all queries")
-            return null
+            null
         } catch (t: Throwable) {
             log("DexKit clipboard discovery failed: ${t.message}")
-            return null
-        } finally {
-            try { bridge?.close() } catch (t: Throwable) { /* ignore */ }
+            null
         }
     }
 
@@ -185,7 +207,7 @@ object ClipboardHooker {
 
     fun hook(plugin: PluginEntry, classLoader: ClassLoader) {
         plugin.apply {
-            val providerClass = findClipboardProviderClass(classLoader) { log(it) }
+            val providerClass = findClipboardProviderClass(this, classLoader) { log(it) }
 
             if (providerClass != null) {
                 hookClipboardProvider(this, classLoader, providerClass)
@@ -197,13 +219,12 @@ object ClipboardHooker {
 
             // InputMethodService hooks (Android framework, always available)
             hookInputMethodService(this, classLoader)
-            hookHashSetSize(this, classLoader)
         }
     }
 
     private fun hookClipboardProvider(plugin: PluginEntry, classLoader: ClassLoader, providerClass: Class<*>) {
         plugin.apply {
-            // --- onCreate: initialize KeyFlux from ContentProvider context ---
+            // --- onCreate: fallback initialization from ContentProvider context ---
             tryHook("ClipboardContentProvider#onCreate") { _ ->
                 findAndHookMethod(
                     providerClass, "onCreate",
@@ -211,7 +232,7 @@ object ClipboardHooker {
                         override fun afterHookedMethod(param: MethodHookParam) {
                             try {
                                 val context = XposedHelpers.callMethod(param.thisObject, "getContext") as? Context ?: return
-                                initializeKeyFlux(context, classLoader)
+                                initializeOnce(context, classLoader, "ClipboardContentProvider#onCreate")
                             } catch (t: Throwable) {
                                 logAlways("Error during ClipboardContentProvider#onCreate: ${t.message}")
                             }
@@ -220,8 +241,9 @@ object ClipboardHooker {
                 )
             }
 
-            // --- query: modify time/size limits ---
-            tryHook("ClipboardContentProvider#query") { _ ->
+            // Gboard 17.8.4 uses this query for multiple internal views. Rewriting its
+            // positional arguments can hide freshly inserted clips, so keep it native.
+            if (ENABLE_PROVIDER_QUERY_OVERRIDES) tryHook("ClipboardContentProvider#query") { _ ->
                 findAndHookMethod(
                     providerClass, "query",
                     Uri::class.java, Array<String>::class.java, String::class.java,
@@ -233,6 +255,13 @@ object ClipboardHooker {
                                 val selection = param.args[2]?.toString() ?: ""
                                 val selectionArgs = param.args[3] as? Array<String>
                                 val sortOrder = param.args[4]?.toString()
+                                val diagnosticArgs = selectionArgs?.joinToString(",") { value ->
+                                    value.toLongOrNull()?.toString() ?: "<text>"
+                                }
+                                logDebug(
+                                    "Clipboard query: selection=$selection, args=[$diagnosticArgs], " +
+                                        "sortOrder=$sortOrder"
+                                )
 
                                 // Modify time limit
                                 val timeIdx = selection.indexOf("timestamp >= ?")
@@ -287,13 +316,11 @@ object ClipboardHooker {
                                     param.result = null
                                     return
                                 }
-                                for (key in values.keySet()) {
-                                    val valueStr = values.getAsString(key) ?: continue
-                                    if (isSensitiveText(valueStr)) {
-                                        log("Blocked clipboard: matches sensitive pattern")
-                                        param.result = null
-                                        return
-                                    }
+                                val clipboardText = values.keySet().associateWith(values::getAsString)
+                                if (containsSensitiveClipboardText(clipboardText)) {
+                                    log("Blocked clipboard: matches sensitive pattern")
+                                    param.result = null
+                                    return
                                 }
                             } catch (t: Throwable) {
                                 log("Error in insert hook: ${t.message}")
@@ -316,6 +343,9 @@ object ClipboardHooker {
                     object : XC_MethodHook() {
                         override fun beforeHookedMethod(param: MethodHookParam) {
                             try {
+                                // Fail open if Gboard supplies incomplete editor metadata. Keeping
+                                // the previous value could incorrectly block a later normal clip.
+                                isCurrentFieldSecure = false
                                 val editorInfo = param.args[0] as? android.view.inputmethod.EditorInfo ?: return
                                 val inputType = editorInfo.inputType
                                 val isPassword = (inputType and android.text.InputType.TYPE_MASK_CLASS) == android.text.InputType.TYPE_CLASS_TEXT &&
@@ -329,8 +359,34 @@ object ClipboardHooker {
                                     editorInfo.imeOptions = editorInfo.imeOptions or android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
                                 }
                             } catch (t: Throwable) {
+                                isCurrentFieldSecure = false
                                 log("Error in onStartInput hook: ${t.message}")
                             }
+                        }
+                    }
+                )
+            }
+
+            tryHook("InputMethodService#onFinishInput") {
+                findAndHookMethod(
+                    "android.inputmethodservice.InputMethodService", classLoader,
+                    "onFinishInput",
+                    object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            isCurrentFieldSecure = false
+                        }
+                    }
+                )
+            }
+
+            tryHook("InputMethodService#onFinishInputView") {
+                findAndHookMethod(
+                    "android.inputmethodservice.InputMethodService", classLoader,
+                    "onFinishInputView",
+                    Boolean::class.javaPrimitiveType,
+                    object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            isCurrentFieldSecure = false
                         }
                     }
                 )
@@ -338,32 +394,4 @@ object ClipboardHooker {
         }
     }
 
-    private fun hookHashSetSize(plugin: PluginEntry, classLoader: ClassLoader) {
-        plugin.apply {
-            tryHook("HashSet#size") { _ ->
-                findAndHookMethod(
-                    HashSet::class.java, "size",
-                    object : XC_MethodHook() {
-                        override fun beforeHookedMethod(param: MethodHookParam) {
-                            try {
-                                val set = param.thisObject as? HashSet<*> ?: return
-                                if (set.isEmpty()) return
-                                val first = set.iterator().run { if (hasNext()) next() else null }
-                                val firstClassName = first?.javaClass?.name
-                                // Gboard uses Instant objects for clipboard timestamps
-                                if (firstClassName == "j$.time.Instant" || firstClassName == "java.time.Instant") {
-                                    val map = XposedHelpers.getObjectField(set, "map") as? Map<*, *>
-                                    if (map != null && map.size <= clipboardTextSize) {
-                                        param.result = clipboardTextSize
-                                    }
-                                }
-                            } catch (t: Throwable) {
-                                log("Error in HashSet.size hook: ${t.message}")
-                            }
-                        }
-                    }
-                )
-            }
-        }
-    }
 }

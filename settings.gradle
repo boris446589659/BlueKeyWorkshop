@@ -17,5 +17,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "KeyFlux"
+rootProject.name = "BlueKeyWorkshop"
 include ':app'

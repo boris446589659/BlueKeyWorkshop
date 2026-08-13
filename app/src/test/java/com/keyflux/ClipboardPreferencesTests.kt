@@ -8,6 +8,31 @@ import org.junit.Test
  */
 class ClipboardPreferencesTests {
 
+    @Test fun `clipboard metadata is never treated as sensitive text`() {
+        val values = mapOf(
+            "_id" to "123456",
+            "timestamp" to "1786000000000",
+            "group_id" to "654321"
+        )
+
+        assertFalse(ClipboardHooker.containsSensitiveClipboardText(values))
+    }
+
+    @Test fun `clipboard text columns are checked for sensitive content`() {
+        assertTrue(ClipboardHooker.containsSensitiveClipboardText(mapOf("text" to "123456")))
+        assertTrue(
+            ClipboardHooker.containsSensitiveClipboardText(
+                mapOf("html_text" to "<b>verification code 123456</b>")
+            )
+        )
+    }
+
+    @Test fun `clipboard uri is not scanned as copied text`() {
+        val values = mapOf("uri" to "content://clipboard_image/1786000000000.png")
+
+        assertFalse(ClipboardHooker.containsSensitiveClipboardText(values))
+    }
+
     // --- resolveClipboardTextSize ---
 
     @Test fun `size defaults to 10 when empty map`() { assertEquals(10, PreferencesManager.resolveClipboardTextSize(emptyMap())) }

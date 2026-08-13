@@ -46,7 +46,7 @@ object FlagsManager {
                             val name = plugin.flagsOverride.getFlagName(param.thisObject) ?: return
                             val override = plugin.flagsOverride.evaluateFlagOverride(name) ?: return
                             param.result = override
-                            if (plugin.logSwitch && loggedOverrides.add(name)) {
+                            if (plugin.logLevel.includes(LogLevel.DEBUG) && loggedOverrides.add(name)) {
                                 plugin.log("Overrode flag $name to $override")
                             }
                         } catch (t: Throwable) {

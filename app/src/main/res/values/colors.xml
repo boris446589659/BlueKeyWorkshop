@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="keyflux_primary">#006B5B</color>
+    <color name="keyflux_on_primary">#FFFFFF</color>
+    <color name="keyflux_secondary">#4D635D</color>
+    <color name="keyflux_tertiary">#475D7A</color>
+    <color name="keyflux_background">#FBFDF9</color>
+    <color name="keyflux_on_background">#191C1B</color>
+    <color name="keyflux_surface">#FBFDF9</color>
+    <color name="keyflux_surface_variant">#DAE5E0</color>
+    <color name="keyflux_on_surface_variant">#3F4946</color>
+</resources>

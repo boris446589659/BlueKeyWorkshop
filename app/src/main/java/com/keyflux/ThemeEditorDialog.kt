@@ -123,7 +123,7 @@ internal object ThemeEditorDialog {
         ) {
             val clipboard = activity.getSystemService(ClipboardManager::class.java)
             clipboard?.setPrimaryClip(
-                ClipData.newPlainText("KeyFlux theme", encode(lightPalette, darkPalette))
+                ClipData.newPlainText("BlueKey Workshop theme", encode(lightPalette, darkPalette))
             )
             Toast.makeText(
                 activity,
@@ -531,7 +531,7 @@ internal object ThemeEditorDialog {
             paint.color = palette.secondary
             paint.textSize = 13f * density
             paint.textAlign = Paint.Align.CENTER
-            arrayOf("hello", "world", "KeyFlux").forEachIndexed { index, value ->
+            arrayOf("hello", "world", "蓝键工坊").forEachIndexed { index, value ->
                 canvas.drawText(value, width * (index * 2 + 1) / 6f, candidateHeight * 0.68f, paint)
             }
 

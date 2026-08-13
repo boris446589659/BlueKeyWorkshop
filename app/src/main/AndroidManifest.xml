@@ -1,20 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <application 
-        android:label="KeyFlux"
-        android:allowBackup="true"
-        android:supportsRtl="true"
-        android:forceQueryable="true">
-        
+    <queries>
+        <package android:name="com.google.android.inputmethod.latin" />
+        <package android:name="org.lsposed.manager" />
+    </queries>
 
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:forceQueryable="true"
+        android:theme="@style/Theme.BlueKeyWorkshop">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="KeyFlux - Gboard Customizer &amp; AI Gated Features Unlocker / تخصيص وتعديل كيبورد Gboard بالكامل" />
+            android:value="蓝键工坊：提供 Gboard 功能增强、隐私控制、主题定制与运行诊断。" />
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />
@@ -28,6 +43,7 @@
         <provider
             android:name=".SettingsProvider"
             android:authorities="com.keyflux.provider"
+            android:grantUriPermissions="false"
             android:exported="true" />
 
     </application>

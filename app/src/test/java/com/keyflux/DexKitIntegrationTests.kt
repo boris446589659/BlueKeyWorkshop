@@ -193,13 +193,14 @@ class DexKitIntegrationTests {
         assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("enable_user_history_decay", prefs))
     }
 
-    @Test fun `Chinese learning takes precedence when privacy is also enabled`() {
+    @Test fun `Privacy takes precedence over Chinese learning storage`() {
         val prefs = mapOf(
             "keyflux_enable_chinese_learning" to true,
             "keyflux_enable_privacy" to true
         )
-        assertEquals(true, FlagsOverrideManager.evaluateFlagOverride("enable_chinese_training_cache", prefs))
-        assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("disable_correction_storage", prefs))
+        assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("enable_chinese_training_cache", prefs))
+        assertEquals(true, FlagsOverrideManager.evaluateFlagOverride("disable_correction_storage", prefs))
+        assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("enable_pc_user_history_ngram_count", prefs))
     }
 
     // --- Clipboard chips ---
@@ -207,7 +208,7 @@ class DexKitIntegrationTests {
     @Test fun `Clipboard chips disabled returns false for entity extraction`() {
         val prefs = mapOf("keyflux_enable_clipboard_chips" to false)
         assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("enable_clipboard_entity_extraction", prefs))
-        assertEquals(false, FlagsOverrideManager.evaluateFlagOverride("enable_clipboard_query_refactoring", prefs))
+        assertNull(FlagsOverrideManager.evaluateFlagOverride("enable_clipboard_query_refactoring", prefs))
     }
 
     @Test fun `Clipboard chips enabled returns true for action chips`() {

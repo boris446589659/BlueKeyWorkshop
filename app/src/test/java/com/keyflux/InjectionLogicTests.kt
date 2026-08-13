@@ -181,8 +181,11 @@ class InjectionLogicTests {
     // --- Preference key completeness ---
 
     @Test fun `all switch preferences are covered`() {
-        assertEquals("Should have exactly 13 switch preferences", 13, PluginEntry.INJECTED_SWITCH_KEYS.size)
+        assertEquals("Should have exactly 16 switch preferences", 16, PluginEntry.INJECTED_SWITCH_KEYS.size)
         assertTrue(PluginEntry.INJECTED_SWITCH_KEYS.contains("keyflux_enable_chinese_learning"))
+        assertTrue(PluginEntry.INJECTED_SWITCH_KEYS.contains("keyflux_enable_adaptive_chinese_learning"))
+        assertTrue(PluginEntry.INJECTED_SWITCH_KEYS.contains("keyflux_enable_chinese_suggestions"))
+        assertTrue(PluginEntry.INJECTED_SWITCH_KEYS.contains("keyflux_enable_emoji_suggestions"))
         assertTrue(PluginEntry.INJECTED_SWITCH_KEYS.contains("keyflux_enable_custom_theme"))
     }
 

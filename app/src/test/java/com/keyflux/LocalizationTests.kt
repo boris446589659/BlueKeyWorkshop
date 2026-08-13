@@ -28,7 +28,7 @@ class LocalizationTests {
 
     @Test
     fun `English key returns English string`() {
-        assertEquals("KeyFlux Settings", Localization.getString("category_title"))
+        assertEquals("BlueKey Workshop Settings", Localization.getString("category_title"))
     }
 
     @Test
@@ -111,10 +111,23 @@ class LocalizationTests {
 
     @Test
     fun `Chinese learning strings exist in English and Chinese`() {
+        val keys = listOf(
+            "keyflux_enable_chinese_learning_title",
+            "keyflux_enable_chinese_learning_summary",
+            "keyflux_enable_chinese_learning_summary_enabled",
+            "keyflux_enable_chinese_learning_summary_disabled",
+            "keyflux_chinese_learning_section_learning",
+            "keyflux_chinese_learning_section_suggestions",
+            "keyflux_enable_adaptive_chinese_learning_title",
+            "keyflux_enable_adaptive_chinese_learning_summary",
+            "keyflux_enable_chinese_suggestions_title",
+            "keyflux_enable_chinese_suggestions_summary",
+            "keyflux_enable_emoji_suggestions_title",
+            "keyflux_enable_emoji_suggestions_summary"
+        )
         for (lang in listOf("en", "zh")) {
             val translations = Localization.translations[lang]!!
-            assertFalse(translations["keyflux_enable_chinese_learning_title"].isNullOrBlank())
-            assertFalse(translations["keyflux_enable_chinese_learning_summary"].isNullOrBlank())
+            for (key in keys) assertFalse("Missing $key in $lang", translations[key].isNullOrBlank())
         }
     }
 

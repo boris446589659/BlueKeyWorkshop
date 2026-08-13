@@ -1,28 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">KeyFlux Gboard Customizer</string>
-    <string name="app_title">KeyFlux Gboard Customizer</string>
-    <string name="ignore_package_limit">Ignore Package Name Limit / تجاهل قيود اسم الحزمة</string>
-    <string name="log_switch">Enable Xposed Logs / تفعيل سجلات Xposed</string>
-    <string name="clipboard_capacity">Clipboard Capacity (items, default 10) / سعة الحافظة (عدد النصوص)</string>
-    <string name="clipboard_expire_time">Retention Time (ms, default 3 days) / مدة حفظ النصوص بالملي ثانية</string>
-    
-    <string name="section_clipboard">Clipboard Tweaks / حافظة النصوص</string>
-    <string name="section_features">Advanced Smart Features / ميزات متقدمة ذكية</string>
-    <string name="section_layout">Layout &amp; Sizing / المظهر والتنسيق</string>
-    <string name="section_advanced">Advanced Custom Flags / أعلام مخصصة متقدمة</string>
-    <string name="section_global">Global settings / إعدادات عامة</string>
-
-    <string name="enable_ai">Enable Smart Reply &amp; Smart Compose / تفعيل الرد الذكي والكتابة الذكية</string>
-    <string name="enable_grammar">Enable Grammar Checker &amp; Proofread / تفعيل مدقق القواعد الإملائية</string>
-    <string name="enable_floating">Enable Floating Keyboard (Auto) / تفعيل وضع الكيبورد العائم</string>
-    <string name="enable_emoji_kitchen">Enable Emoji Kitchen Browse / تفعيل استعراض مطبخ الإيموجي</string>
-    <string name="enable_access_point">Redesign Access Point Menu / إعادة تصميم قائمة الميزات</string>
-    <string name="enable_amoled">Enable AMOLED Black Theme / تفعيل مظهر AMOLED الأسود</string>
-    <string name="allow_metered_downloads">Allow Mobile Data Downloads / السماح بالتنزيل عبر بيانات الهاتف</string>
-
-    <string name="custom_true_flags">Force True Flags (comma-separated) / أعلام إجبارية صحيحة (مفصولة بفاصلة)</string>
-    <string name="custom_false_flags">Force False Flags (comma-separated) / أعلام إجبارية خاطئة (مفصولة بفاصلة)</string>
-
-    <string name="apply">Save and Restart Gboard / حفظ وإعادة تشغيل الكيبورد</string>
-    <string name="restart_hint">Changes require restarting Gboard. First time requires phone restart.\nتتطلب التغييرات إعادة تشغيل Gboard. المرة الأولى تتطلب إعادة تشغيل الهاتف.</string>
+    <string name="app_name">蓝键工坊</string>
+    <string name="app_subtitle">Gboard 模块设置</string>
+    <string name="configuration_status">设置由蓝键工坊独立保存，并在 Gboard 下次启动时载入。</string>
+    <string name="section_input">输入与建议</string>
+    <string name="section_learning">中文学习</string>
+    <string name="section_privacy">隐私与剪贴板</string>
+    <string name="section_appearance">外观</string>
+    <string name="section_experimental">实验功能</string>
+    <string name="section_diagnostics">诊断</string>
+    <string name="status_saved">设置已保存</string>
+    <string name="status_restart_required">已保存，重启 Gboard 后生效</string>
+    <string name="open_gboard_info">Gboard 应用信息</string>
+    <string name="save_failed">设置保存失败</string>
+    <string name="gboard_not_found">无法打开 Gboard 应用信息</string>
+    <string name="version_title">版本</string>
+    <string name="version_format">%1$s (%2$d)</string>
+    <string name="package_version_format">%1$s (%2$d)</string>
+    <string name="module_status_checking">正在检查模块状态</string>
+    <string name="module_status_checking_summary">正在等待 Gboard 进程响应</string>
+    <string name="module_status_active">模块已激活</string>
+    <string name="module_status_active_summary">蓝键工坊正在 Gboard 进程中运行</string>
+    <string name="module_status_hook_warnings">已激活，但检测到 %1$d 项兼容性异常</string>
+    <string name="module_status_restart">需要重启 Gboard</string>
+    <string name="module_status_version_mismatch">Gboard 仍在运行旧模块 %1$s</string>
+    <string name="module_status_inactive">未检测到激活</string>
+    <string name="module_status_inactive_summary">请确认 LSPosed 已启用模块并勾选 Gboard 作用域</string>
+    <string name="module_status_gboard_missing">未安装 Gboard，无法验证模块注入状态</string>
+    <string name="status_lsposed">LSPosed</string>
+    <string name="status_xposed_api">Xposed API</string>
+    <string name="status_gboard">Gboard</string>
+    <string name="status_module">模块</string>
+    <string name="status_android">系统</string>
+    <string name="status_checking">检查中</string>
+    <string name="status_no_response">无响应</string>
+    <string name="status_not_detected">未检测到</string>
+    <string name="status_not_installed">未安装</string>
+    <string name="status_unknown">未知</string>
+    <string name="xposed_api_format">API %1$d</string>
+    <string name="android_version_format">Android %1$s · API %2$d · %3$s</string>
 </resources>

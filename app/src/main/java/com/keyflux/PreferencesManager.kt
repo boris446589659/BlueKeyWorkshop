@@ -3,6 +3,7 @@ package com.keyflux
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Bundle
 import java.util.Locale
 
 /**
@@ -26,13 +27,13 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
             return days.toLong() * 1000 * 60 * 60 * 24
         }
 
-        /** Local Gboard storage is authoritative; the provider is migration-only. */
+        /** Standalone app values override the legacy Gboard-local settings. */
         fun mergePreferenceMaps(
             local: Map<String, Any>,
             provider: Map<String, Any>
         ): HashMap<String, Any> = HashMap<String, Any>().apply {
-            putAll(provider)
             putAll(local)
+            putAll(provider)
         }
 
         fun detectSensitiveText(text: String): Boolean {
@@ -56,7 +57,12 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
                 "pin", "token", "secret", "auth", "2fa", "mfa", "passcode",
                 "رقم سري", "رمز الدخول", "توثيق", "كود"
             )
-            if (sensitiveKeywords.any { lower.contains(it) }) {
+            if (sensitiveKeywords.any { keyword ->
+                    Regex(
+                        "(?<![\\p{L}\\p{N}])${Regex.escape(keyword)}(?![\\p{L}\\p{N}])"
+                    ).containsMatchIn(lower)
+                }
+            ) {
                 return true
             }
 
@@ -119,45 +125,50 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
                 }
             }
             val providerMap = HashMap<String, Any>()
-            val hasLocalKeyFluxValues = localMap.keys.any { it.startsWith("keyflux_") }
-            if (!hasLocalKeyFluxValues) {
-                try {
-                    val uri = Uri.parse("content://com.keyflux.provider/settings")
-                    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                        val keyIndex = cursor.getColumnIndex("key")
-                        val valueIndex = cursor.getColumnIndex("value")
-                        val typeIndex = cursor.getColumnIndex("type")
-                        if (keyIndex != -1 && valueIndex != -1 && typeIndex != -1) {
-                            while (cursor.moveToNext()) {
-                                val key = cursor.getString(keyIndex) ?: continue
-                                val valStr = cursor.getString(valueIndex) ?: ""
-                                val type = cursor.getString(typeIndex) ?: "string"
-                                val typedVal: Any = when (type) {
-                                    "boolean" -> valStr.toBoolean()
-                                    "int" -> valStr.toIntOrNull() ?: 0
-                                    "long" -> valStr.toLongOrNull() ?: 0L
-                                    "float" -> valStr.toFloatOrNull() ?: 0f
-                                    else -> valStr
-                                }
-                                providerMap[key] = typedVal
+            try {
+                if (localMap.isNotEmpty()) {
+                    val seed = Bundle().apply {
+                        for ((key, value) in localMap) {
+                            if (!ProviderAccessPolicy.isExposedPreference(key)) continue
+                            when (value) {
+                                is Boolean -> putBoolean(key, value)
+                                is Int -> putInt(key, value)
+                                is Long -> putLong(key, value)
+                                is Float -> putFloat(key, value)
+                                is String -> putString(key, value)
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    plugin.log("ContentProvider settings query skipped: ${e.message}")
+                    context.contentResolver.call(
+                        SettingsProvider.CONTENT_URI,
+                        SettingsProvider.METHOD_SEED_MISSING,
+                        null,
+                        seed
+                    )
                 }
-            }
-            val missingProviderValues = providerMap.filterKeys { it !in localMap }
-            if (missingProviderValues.isNotEmpty()) {
-                val editor = sp.edit()
-                for ((key, value) in missingProviderValues) {
-                    val type = valueType(value)
-                    editor.putString(key, CryptoHelper.encrypt(value.toString()))
-                    editor.putString(key + "_type", type)
+                val uri = Uri.parse("content://com.keyflux.provider/settings")
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val keyIndex = cursor.getColumnIndex("key")
+                    val valueIndex = cursor.getColumnIndex("value")
+                    val typeIndex = cursor.getColumnIndex("type")
+                    if (keyIndex != -1 && valueIndex != -1 && typeIndex != -1) {
+                        while (cursor.moveToNext()) {
+                            val key = cursor.getString(keyIndex) ?: continue
+                            val valStr = cursor.getString(valueIndex) ?: ""
+                            val type = cursor.getString(typeIndex) ?: "string"
+                            val typedVal: Any = when (type) {
+                                "boolean" -> valStr.toBoolean()
+                                "int" -> valStr.toIntOrNull() ?: 0
+                                "long" -> valStr.toLongOrNull() ?: 0L
+                                "float" -> valStr.toFloatOrNull() ?: 0f
+                                else -> valStr
+                            }
+                            providerMap[key] = typedVal
+                        }
+                    }
                 }
-                if (!editor.commit()) {
-                    plugin.logAlways("Failed to commit migrated provider preferences")
-                }
+            } catch (e: Exception) {
+                plugin.log("ContentProvider settings query skipped: ${e.message}")
             }
 
             val newMap = mergePreferenceMaps(localMap, providerMap)
@@ -169,9 +180,8 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
     }
 
     @Synchronized
-    internal fun savePreferenceToProvider(context: Context, key: String, value: Any) {
+    internal fun savePreferenceToProvider(context: Context, key: String, value: Any): Boolean =
         savePreferences(context, mapOf(key to value))
-    }
 
     /** Persist a related group in one commit so a theme can never be half-written. */
     @Synchronized
@@ -260,6 +270,15 @@ internal class PreferencesManager(private val plugin: PluginEntry) {
 
     internal val enableChineseLearning: Boolean
         get() = prefsMap["keyflux_enable_chinese_learning"] as? Boolean ?: false
+
+    internal val enableAdaptiveChineseLearning: Boolean
+        get() = prefsMap["keyflux_enable_adaptive_chinese_learning"] as? Boolean ?: true
+
+    internal val enableChineseSuggestions: Boolean
+        get() = prefsMap["keyflux_enable_chinese_suggestions"] as? Boolean ?: true
+
+    internal val enableEmojiSuggestions: Boolean
+        get() = prefsMap["keyflux_enable_emoji_suggestions"] as? Boolean ?: true
 
     internal val secureClipboard: Boolean
         get() = prefsMap["keyflux_secure_clipboard"] as? Boolean ?: false

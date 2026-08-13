@@ -1,117 +1,80 @@
-# KeyFlux
+<p align="center">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="128" height="128" alt="蓝键工坊图标">
+</p>
 
-KeyFlux is an LSPosed/Xposed module for customizing Google Keyboard (Gboard).
+<h1 align="center">蓝键工坊</h1>
 
-It focuses on exposing selected hidden or experimental Gboard options, improving clipboard behavior, and integrating additional settings into Gboard's native settings interface when supported by the installed Gboard version.
+<p align="center">面向 Gboard 的 LSPosed/Xposed 功能增强与隐私控制模块</p>
 
-## Features
+蓝键工坊基于 [KeyFlux](https://github.com/NawafCode/KeyFlux) 二次开发，在保留原项目能力的基础上，提供独立的中文设置应用、中文学习控制、剪贴板增强、主题调整和运行状态诊断。
 
-* **Hidden Gboard Flags**
+> 本仓库保留 GitHub fork 关系和完整提交历史。项目内部的 `com.keyflux` 包名、`KeyFluxPrefs` 存储名及 `keyflux_*` 配置键暂时保留，用于兼容已安装版本和已有设置。
 
-  * Exposes selected internal Gboard flags through configurable settings.
-  * Availability may depend on the installed Gboard version.
+## 主要功能
 
-* **Experimental Features**
+- **独立设置应用**：所有模块选项均在蓝键工坊中管理，不向 Gboard 设置页面注入界面。
+- **中文学习控制**：控制 Gboard 的本地中文学习、个性化建议和表情建议，并保留纠错学习数据。
+- **剪贴板增强**：调整历史条目数量和保留时间，避免敏感文本进入历史记录。
+- **输入功能解锁**：控制多语言输入、语法检查、智能输入、悬浮键盘及 Emoji Kitchen 等功能。
+- **实验功能**：提供内联建议、主动表情建议、剪贴板快捷操作、TFLite 引擎和新版快捷栏开关。
+- **外观定制**：提供 AMOLED 深色模式及自定义主题调色板。
+- **隐私控制**：可强制无痕模式并减少遥测和分析数据。
+- **状态诊断**：显示 LSPosed、Xposed API、Gboard 版本和模块注入状态。
 
-  * Optional toggles for selected experimental Gboard capabilities.
-  * Some features may depend on Google server-side configuration, Gboard version, device ROM, or Android version.
+部分选项对应 Gboard 内部实验开关，是否生效取决于 Gboard 版本、Google 服务端配置、Android 版本及设备 ROM。
 
-* **Clipboard Enhancements**
+## 环境要求
 
-  * Adds configurable clipboard history retention options.
-  * Supports longer retention behavior where compatible.
-  * Designed not to log clipboard contents or copied sensitive text.
+- Android 7.0（API 24）或更高版本
+- 已安装 Gboard
+- 已安装并启用 LSPosed 兼容框架
+- 在模块作用域中勾选 Gboard
+- 当前构建包含 `arm64-v8a` 和 `x86_64` 原生库
 
-* **Chinese Personalization**
+## 安装与使用
 
-  * Enables Gboard's on-device Chinese training cache on supported versions.
-  * Keeps correction storage available and avoids forced user-history decay.
-  * Can be disabled independently when local learning is not desired.
+1. 从本仓库 Releases 下载蓝键工坊 APK 并安装。
+2. 在 LSPosed 管理器中启用蓝键工坊。
+3. 将 Gboard 加入模块作用域。
+4. 强制停止并重新启动 Gboard。
+5. 打开蓝键工坊配置所需功能；修改后按界面提示重启 Gboard。
 
-* **Gboard Settings Integration**
-
-  * Injects KeyFlux options into supported Gboard settings screens.
-  * Attempts to match Gboard's native layout style where possible.
-
-* **Compatibility Fallbacks**
-
-  * Uses a safer initialization path with fallback hook handling.
-  * Prevents duplicate initialization within the same process.
-
-## Compatibility
-
-Compatibility may vary depending on Android version, ROM, Gboard version, and hook framework.
-
-### Tested / Targeted
-
-* **Target app:** Google Gboard
-* **Hook frameworks:**
-
-  * [Vector](https://github.com/NawafCode/Vector) recommended
-  * LSPosed-compatible frameworks may work, but behavior can vary
-* **Architecture:**
-
-  * `arm64-v8a`
-  * `x86_64`
-
-### Notes
-
-* Some hidden or experimental Gboard flags may not exist in every Gboard version.
-* Some features may be controlled remotely by Google and may not activate even if the local flag is enabled.
-* Samsung One UI and heavily modified ROMs may require additional fallback handling.
-
-## Installation
-
-1. Install an LSPosed-compatible hook framework on a rooted device.
-2. Download the latest KeyFlux APK from the Releases page.
-3. Install the APK.
-4. Enable the KeyFlux module in your hook framework manager.
-5. Select **Gboard** as the module scope.
-6. Force stop Gboard.
-7. Open Gboard settings and configure KeyFlux options.
-
-## Build Instructions
-
-To build the project locally:
+## 本地构建
 
 ```bash
-./gradlew assembleDebug
+./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 
-For release builds:
+发布构建：
 
 ```bash
-./gradlew assembleRelease
+./gradlew :app:assembleRelease
 ```
 
-## Privacy
+生成的 APK 位于 `app/build/outputs/apk/`。
 
-KeyFlux is designed not to log clipboard contents or copied sensitive text.
+## 隐私说明
 
-If you find logs that expose sensitive data, please open an issue with the log context after removing private information.
+蓝键工坊不会主动记录剪贴板内容或复制的敏感文本。提交问题和日志前，请先删除设备信息、账号、输入内容等隐私数据。
 
-## Troubleshooting
+## 问题排查
 
-If KeyFlux does not load correctly:
+如模块未生效，请依次确认：
 
-1. Make sure Gboard is selected in the module scope.
-2. Force stop Gboard after enabling the module.
-3. Reboot the device if needed.
-4. Check LSPosed/Vector logs.
-5. Open an issue and include:
+1. 蓝键工坊已在 LSPosed 中启用，且作用域包含 Gboard。
+2. 修改设置后已经强制停止并重新启动 Gboard。
+3. 蓝键工坊首页显示的模块版本与当前安装版本一致。
+4. 当前 Gboard 版本仍包含对应的内部功能。
 
-   * Android version
-   * ROM / device model
-   * Gboard version
-   * KeyFlux version
-   * Relevant LSPosed/Vector logs
+反馈问题时请附上 Android/ROM、Gboard 版本、蓝键工坊版本及已脱敏的 LSPosed 日志。
 
-## Contributors
+## 上游与致谢
 
-* [NawafCode](https://github.com/NawafCode) - Original project author.
-* [Boris448](https://github.com/boris446589659) - Fork maintenance and device validation.
-* **OpenAI Codex** - AI-assisted debugging, implementation, and validation.
+- 上游项目：[NawafCode/KeyFlux](https://github.com/NawafCode/KeyFlux)
+- 原项目作者：[NawafCode](https://github.com/NawafCode)
+- 本 fork 维护：[Boris448](https://github.com/boris446589659)
+- 开发辅助：OpenAI Codex
 
-## License
+## 许可证
 
-This project is licensed under the MIT License.
+本项目沿用上游项目的 [MIT License](LICENSE)。

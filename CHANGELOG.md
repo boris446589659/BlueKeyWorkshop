@@ -1,14 +1,14 @@
-# Changelog
+# 蓝键工坊更新日志
 
-All notable changes to this project will be documented in this file.
+本文件记录蓝键工坊的主要版本变化。
 
-## [Unreleased]
+## [未发布]
 
 ### Added
 - **Chinese personalization**: Adds a dedicated toggle for Gboard's local
   `enable_chinese_training_cache` path while preserving correction storage and
   learned word frequencies. Verified against Gboard 17.8.3 beta.
-- **Simplified Chinese UI**: Adds native Chinese labels for all KeyFlux settings.
+- **简体中文界面**：为蓝键工坊的全部设置提供中文文案。
 - **Experimental & AI Features Section**: Added a new settings category in Gboard containing 5 new toggles.
   - **Inline Suggestions**: Toggle `enable_inline_suggestions_on_decoder_side`.
   - **Proactive Emoji Kitchen**: Toggle `enable_proactive_emoji_kitchen` and `enable_expression_moment`.
@@ -30,7 +30,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Android 16 settings sync**: Removes the privileged `singleUser` provider flag
-  that blocked Gboard from reading and writing KeyFlux preferences.
+  that blocked Gboard from reading and writing module preferences.
 - **Input stability**: Removed the always-on experimental InputConnection proxy
   from module startup.
 - **Logging preference**: The log switch now controls verbose Xposed logging.

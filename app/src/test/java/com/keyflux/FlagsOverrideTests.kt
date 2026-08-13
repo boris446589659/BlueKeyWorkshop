@@ -92,6 +92,12 @@ class FlagsOverrideTests {
         assertEquals(false, evaluate("enable_clipboard_entity_extraction"))
     }
 
+    @Test fun `Clipboard chips setting preserves native query refactoring`() {
+        assertNull(evaluate("enable_clipboard_query_refactoring"))
+        val p = mapOf("keyflux_enable_clipboard_chips" to true)
+        assertNull(evaluate("enable_clipboard_query_refactoring", p))
+    }
+
     @Test fun `Clipboard chips enabled enables action chips`() {
         val p = mapOf("keyflux_enable_clipboard_chips" to true)
         assertEquals(true, evaluate("enable_clipboard_action_chips", p))
@@ -118,6 +124,32 @@ class FlagsOverrideTests {
         val p = mapOf("keyflux_enable_proactive_emoji" to true)
         assertEquals(true, evaluate("enable_proactive_emoji_kitchen", p))
         assertEquals(true, evaluate("enable_expression_moment", p))
+    }
+
+    @Test fun `Chinese personalization subfeatures map independently`() {
+        val allEnabled = mapOf("keyflux_enable_chinese_learning" to true)
+        assertEquals(true, evaluate("enable_chinese_training_cache", allEnabled))
+        assertEquals(true, evaluate("enable_multiword_predictions_from_user_history", allEnabled))
+        assertEquals(true, evaluate("enable_smart_emoji_nwp", allEnabled))
+
+        val chineseOnly = allEnabled + mapOf(
+            "keyflux_enable_adaptive_chinese_learning" to false,
+            "keyflux_enable_emoji_suggestions" to false
+        )
+        assertNull(evaluate("enable_chinese_training_cache", chineseOnly))
+        assertEquals(true, evaluate("enable_nwp", chineseOnly))
+        assertNull(evaluate("enable_smart_emoji_nwp", chineseOnly))
+    }
+
+    @Test fun `Privacy blocks history learning but keeps stateless suggestions`() {
+        val p = mapOf(
+            "keyflux_enable_chinese_learning" to true,
+            "keyflux_enable_privacy" to true
+        )
+        assertEquals(false, evaluate("enable_chinese_training_cache", p))
+        assertEquals(false, evaluate("enable_multiword_predictions_from_user_history", p))
+        assertEquals(true, evaluate("enable_nwp", p))
+        assertEquals(true, evaluate("enable_semantic_emoji", p))
     }
 
     @Test fun `non-matching flag returns null even when AI enabled`() {

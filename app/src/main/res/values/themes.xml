@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.BlueKeyWorkshop" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/keyflux_primary</item>
+        <item name="colorOnPrimary">@color/keyflux_on_primary</item>
+        <item name="colorSecondary">@color/keyflux_secondary</item>
+        <item name="colorTertiary">@color/keyflux_tertiary</item>
+        <item name="android:colorBackground">@color/keyflux_background</item>
+        <item name="colorOnBackground">@color/keyflux_on_background</item>
+        <item name="colorSurface">@color/keyflux_surface</item>
+        <item name="colorSurfaceVariant">@color/keyflux_surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/keyflux_on_surface_variant</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:fontFamily">sans</item>
+    </style>
+
+    <style name="TextAppearance.BlueKeyWorkshop.ToolbarTitle" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textStyle">bold</item>
+    </style>
+</resources>

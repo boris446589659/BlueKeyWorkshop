@@ -6,13 +6,13 @@ import org.junit.Test
 class PreferencesMergeTests {
 
     @Test
-    fun `local values override stale provider values`() {
+    fun `standalone app values override legacy local values`() {
         val merged = PreferencesManager.mergePreferenceMaps(
             local = mapOf("switch" to true),
             provider = mapOf("switch" to false)
         )
 
-        assertEquals(true, merged["switch"])
+        assertEquals(false, merged["switch"])
     }
 
     @Test

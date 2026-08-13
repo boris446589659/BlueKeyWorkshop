@@ -63,5 +63,10 @@ class IsSensitiveTextTests {
     @Test fun `text with passcode keyword is sensitive`() { assertTrue(isSensitive("Use this passcode: 12345")) }
     @Test fun `case insensitive keyword detection`() { assertTrue(isSensitive("PASSWORD")); assertTrue(isSensitive("Password")); assertTrue(isSensitive("password")) }
     @Test fun `keyword within longer text is sensitive`() { assertTrue(isSensitive("Please enter your verification code now")) }
+    @Test fun `sensitive keyword substrings are not sensitive`() {
+        assertFalse(isSensitive("author biography"))
+        assertFalse(isSensitive("spinning animation"))
+        assertFalse(isSensitive("tokenizer implementation"))
+    }
     @Test fun `whitespace-only string is NOT sensitive`() { assertFalse(isSensitive("   ")) }
 }

@@ -25,6 +25,8 @@ import kotlin.math.roundToInt
  * Full-height detail surface used by the theme editor and color picker.
  */
 internal object SettingsPanel {
+    enum class NavigationIcon { BACK, CLOSE }
+
     data class Handle(
         val dialog: Dialog,
         val content: LinearLayout,
@@ -48,7 +50,12 @@ internal object SettingsPanel {
 
     fun colors(context: Context): Colors = palette(context)
 
-    fun create(activity: Activity, title: CharSequence): Handle {
+    fun create(
+        activity: Activity,
+        title: CharSequence,
+        navigationIcon: NavigationIcon = NavigationIcon.CLOSE,
+        showFooter: Boolean = true
+    ): Handle {
         val colors = palette(activity)
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -60,18 +67,30 @@ internal object SettingsPanel {
 
         val toolbar = LinearLayout(activity).apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(activity, 20), 0, dp(activity, 8), 0)
+            setPadding(
+                dp(activity, if (navigationIcon == NavigationIcon.BACK) 8 else 20),
+                0,
+                dp(activity, 8),
+                0
+            )
             minimumHeight = dp(activity, 64)
+        }
+        if (navigationIcon == NavigationIcon.BACK) {
+            toolbar.addView(navigationButton(activity, colors, navigationIcon) { dialog.dismiss() }, LinearLayout.LayoutParams(
+                dp(activity, 48), dp(activity, 48)
+            ))
         }
         toolbar.addView(TextView(activity).apply {
             text = title
-            textSize = 22f
+            textSize = 20f
             setTextColor(colors.text)
             gravity = Gravity.CENTER_VERTICAL
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        toolbar.addView(closeButton(activity, colors) { dialog.dismiss() }, LinearLayout.LayoutParams(
-            dp(activity, 44), dp(activity, 44)
-        ))
+        if (navigationIcon == NavigationIcon.CLOSE) {
+            toolbar.addView(navigationButton(activity, colors, navigationIcon) { dialog.dismiss() }, LinearLayout.LayoutParams(
+                dp(activity, 44), dp(activity, 44)
+            ))
+        }
         root.addView(toolbar, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 64)
         ))
@@ -98,12 +117,14 @@ internal object SettingsPanel {
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
             setPadding(dp(activity, 20), dp(activity, 12), dp(activity, 20), dp(activity, 12))
         }
-        root.addView(divider(activity, colors), ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 1)
-        ))
-        root.addView(footer, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 72)
-        ))
+        if (showFooter) {
+            root.addView(divider(activity, colors), ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 1)
+            ))
+            root.addView(footer, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 72)
+            ))
+        }
 
         dialog.setContentView(root)
         // Configure before show so the first rendered frame is already full screen.
@@ -208,11 +229,19 @@ internal object SettingsPanel {
     fun dp(context: Context, value: Int): Int =
         (value * context.resources.displayMetrics.density).roundToInt()
 
-    private fun closeButton(context: Context, colors: Colors, onClick: () -> Unit): ImageButton =
+    private fun navigationButton(
+        context: Context,
+        colors: Colors,
+        icon: NavigationIcon,
+        onClick: () -> Unit
+    ): ImageButton =
         ImageButton(context).apply {
-            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            setImageResource(
+                if (icon == NavigationIcon.BACK) android.R.drawable.ic_media_previous
+                else android.R.drawable.ic_menu_close_clear_cancel
+            )
             setColorFilter(colors.muted)
-            contentDescription = "Close"
+            contentDescription = if (icon == NavigationIcon.BACK) "Back" else "Close"
             background = ColorDrawable(Color.TRANSPARENT)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) stateListAnimator = null
             setOnClickListener { onClick() }

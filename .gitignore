@@ -25,6 +25,9 @@ local.properties
 /gboard_decompiled/
 /device-apk/
 /tools/
+!/tools/
+/tools/*
+!/tools/generate_launcher_icon.ps1
 /*.apk
 /gboard_pkg.txt
 /activities.txt
@@ -34,6 +37,8 @@ local.properties
 /keyflux_test_log.txt
 /screen_*.png
 /*.png
+/.codex-status-before.xml
+/.codex-video-reference/
 
 # Gradle
 .gradle/

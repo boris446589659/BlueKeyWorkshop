@@ -1,5 +1,6 @@
 package com.keyflux
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.app.Activity
 import android.content.BroadcastReceiver
@@ -59,7 +60,8 @@ class PluginEntry : IXposedHookLoadPackage {
             "keyflux_enable_access_point", "keyflux_enable_amoled",
             "keyflux_enable_custom_theme",
             "keyflux_enable_grammar", "keyflux_enable_ai",
-            "keyflux_enable_chinese_learning",
+            "keyflux_enable_chinese_learning", "keyflux_enable_adaptive_chinese_learning",
+            "keyflux_enable_chinese_suggestions", "keyflux_enable_emoji_suggestions",
             "keyflux_secure_clipboard",
             "keyflux_enable_emoji_kitchen",
             "keyflux_force_incognito", "keyflux_enable_privacy"
@@ -111,7 +113,8 @@ class PluginEntry : IXposedHookLoadPackage {
         try {
             loadLibrary("dexkit")
         } catch (t: Throwable) {
-            logAlways("failed to load dexkit library: ${t.message}")
+            // `prefs` is initialized after this block, so startup failures must not use logAt().
+            XposedBridge.log("$TAG[E] Failed to load DexKit library: ${t.message}")
         }
     }
 
@@ -123,12 +126,18 @@ class PluginEntry : IXposedHookLoadPackage {
     private val colorOverrideLogCount = AtomicInteger()
     private val colorOverrideLimitNoted = AtomicBoolean(false)
 
+    private val dexKitLock = Any()
+    @Volatile private var dexKitBridge: DexKitBridge? = null
+    private val processStatusToken =
+        "${android.os.Process.myPid()}:${android.os.SystemClock.elapsedRealtimeNanos()}"
+
     @Volatile
     internal var isCurrentFieldSecure: Boolean = false
     @Volatile
     internal var canApplyFlagOverrides: Boolean = false
     internal var preferenceHooksApplied = false
     private var userUnlockReceiver: BroadcastReceiver? = null
+    private var moduleStatusReceiver: BroadcastReceiver? = null
     val failedHooks = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     // --- Proxy accessors for hooker files (keep binary compatibility) ---
@@ -139,7 +148,6 @@ class PluginEntry : IXposedHookLoadPackage {
 
     internal val clipboardTextSize: Int get() = prefs.clipboardTextSize
     internal val clipboardTextTime: Long get() = prefs.clipboardTextTime
-    internal val logSwitch: Boolean get() = prefs.logSwitch
     internal val logLevel: LogLevel get() = prefs.logLevel
     internal val enableAi: Boolean get() = prefs.enableAi
     internal val enableGrammar: Boolean get() = prefs.enableGrammar
@@ -153,6 +161,9 @@ class PluginEntry : IXposedHookLoadPackage {
     internal val forceIncognito: Boolean get() = prefs.forceIncognito
     internal val enablePrivacy: Boolean get() = prefs.enablePrivacy
     internal val enableChineseLearning: Boolean get() = prefs.enableChineseLearning
+    internal val enableAdaptiveChineseLearning: Boolean get() = prefs.enableAdaptiveChineseLearning
+    internal val enableChineseSuggestions: Boolean get() = prefs.enableChineseSuggestions
+    internal val enableEmojiSuggestions: Boolean get() = prefs.enableEmojiSuggestions
     internal val secureClipboard: Boolean get() = prefs.secureClipboard
     internal val enableInlineSuggestions: Boolean get() = prefs.enableInlineSuggestions
     internal val enableProactiveEmoji: Boolean get() = prefs.enableProactiveEmoji
@@ -176,8 +187,10 @@ class PluginEntry : IXposedHookLoadPackage {
 
     // --- Logging ---
 
-    /** Detailed per-hook diagnostics. Shown only when the Debug level is selected. */
-    internal fun log(str: String) = logAt(LogLevel.DEBUG, str)
+    /** Detailed diagnostics stay at Debug, while failures retain their actual severity. */
+    internal fun log(str: String) = logAt(LogLevel.fromMessage(str, LogLevel.DEBUG), str)
+
+    internal fun logDebug(str: String) = logAt(LogLevel.DEBUG, str)
 
     internal fun logInfo(str: String) = logAt(LogLevel.INFO, str)
 
@@ -185,8 +198,11 @@ class PluginEntry : IXposedHookLoadPackage {
 
     internal fun logError(str: String) = logAt(LogLevel.ERROR, str)
 
-    /** Compatibility bridge for existing important log sites. */
-    internal fun logAlways(str: String) = logAt(inferLogLevel(str), str)
+    /** Lifecycle and compatibility messages that must remain visible at every configured level. */
+    internal fun logAlways(str: String) {
+        val level = LogLevel.fromMessage(str, LogLevel.INFO)
+        XposedBridge.log("$TAG[${level.label}] $str")
+    }
 
     private fun logAt(level: LogLevel, str: String) {
         if (logLevel.includes(level)) {
@@ -194,14 +210,21 @@ class PluginEntry : IXposedHookLoadPackage {
         }
     }
 
-    private fun inferLogLevel(str: String): LogLevel {
-        val message = str.lowercase()
-        return when {
-            "error" in message || "failed" in message || "crash" in message || "exception" in message -> LogLevel.ERROR
-            "disabled" in message || "skipped" in message || "deferred" in message ||
-                "not found" in message || "rejected" in message || "no methods" in message -> LogLevel.WARN
-            else -> LogLevel.INFO
+    internal fun <T> withDexKitBridge(
+        classLoader: ClassLoader,
+        block: (DexKitBridge) -> T
+    ): T? = synchronized(dexKitLock) {
+        val bridge = dexKitBridge ?: try {
+            DexKitBridge.create(classLoader, true).also {
+                dexKitBridge = it
+                logDebug("Shared DexKit bridge initialized")
+            }
+        } catch (t: Throwable) {
+            logError("Failed to initialize DexKitBridge: ${t.message}")
+            failedHooks.add("DexKitBridge")
+            return@synchronized null
         }
+        block(bridge)
     }
 
     private fun logColorOverride(str: String) {
@@ -262,6 +285,7 @@ class PluginEntry : IXposedHookLoadPackage {
 
         try {
             loadPreferences(context)
+            logInfo("Config loaded: logLevel=${logLevel.storedValue}, enableAi=$enableAi, clipboardTextSize=$clipboardTextSize")
             updateDirectBootState(context)
 
             val sp = getSafeSharedPreferences(context, "keyflux_hook")
@@ -311,14 +335,9 @@ class PluginEntry : IXposedHookLoadPackage {
                 }
                 CoroutineScope(Dispatchers.Default).launch {
                     log("Resolving flag reader via DexKit")
-                    val dexBridge = try {
-                        DexKitBridge.create(classLoader, true)
-                    } catch (t: Throwable) {
-                        log("Failed to initialize DexKitBridge: ${t.message}")
-                        failedHooks.add("DexKitBridge")
-                        null
+                    val method = withDexKitBridge(classLoader) { bridge ->
+                        flagsOverride.findReadConfigMethod(bridge)
                     }
-                    val method = dexBridge?.let { flagsOverride.findReadConfigMethod(it) }
                     if (method != null && FlagsManager.hook(this@PluginEntry, classLoader, method)) {
                         sp.edit {
                             putLong(spKeyVersion, versionCode)
@@ -330,15 +349,51 @@ class PluginEntry : IXposedHookLoadPackage {
                         logAlways("Failed to resolve a compatible Gboard flag reader")
                         failedHooks.add("FlagsManager")
                     }
-                    try {
-                        dexBridge?.close()
-                    } catch (t: Throwable) {
-                        log("Failed to close DexKitBridge: ${t.message}")
-                    }
                 }
             }
         } catch (t: Throwable) {
             logAlways("Error during initializeKeyFlux: ${t.message}")
+        }
+    }
+
+    internal fun initializeOnce(context: Context, classLoader: ClassLoader, source: String) {
+        if (!isInitialized.compareAndSet(false, true)) return
+        logAlways("Selected context hook path: $source")
+        registerModuleStatusReceiver(context)
+        initializeKeyFlux(context, classLoader)
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private fun registerModuleStatusReceiver(context: Context) {
+        val appContext = context.applicationContext ?: context
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receivedContext: Context, intent: Intent) {
+                if (intent.action != ModuleStatusProtocol.REQUEST_ACTION) return
+                val nonce = intent.getStringExtra(ModuleStatusProtocol.EXTRA_NONCE) ?: return
+                val xposedApi = runCatching { XposedBridge.getXposedVersion() }.getOrDefault(-1)
+                val response = Intent(ModuleStatusProtocol.RESPONSE_ACTION)
+                    .setPackage(ProviderAccessPolicy.MODULE_PACKAGE)
+                    .putExtra(ModuleStatusProtocol.EXTRA_NONCE, nonce)
+                    .putExtra(ModuleStatusProtocol.EXTRA_MODULE_VERSION_NAME, BuildConfig.VERSION_NAME)
+                    .putExtra(ModuleStatusProtocol.EXTRA_MODULE_VERSION_CODE, BuildConfig.VERSION_CODE)
+                    .putExtra(ModuleStatusProtocol.EXTRA_XPOSED_API, xposedApi)
+                    .putExtra(ModuleStatusProtocol.EXTRA_FAILED_HOOK_COUNT, failedHooks.size)
+                    .putExtra(ModuleStatusProtocol.EXTRA_PROCESS_TOKEN, processStatusToken)
+                receivedContext.sendBroadcast(response)
+            }
+        }
+
+        try {
+            val filter = IntentFilter(ModuleStatusProtocol.REQUEST_ACTION)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                appContext.registerReceiver(receiver, filter)
+            }
+            moduleStatusReceiver = receiver
+        } catch (t: Throwable) {
+            logWarning("Failed to register module status receiver: ${t.message}")
         }
     }
 
@@ -357,8 +412,6 @@ class PluginEntry : IXposedHookLoadPackage {
             logAlways("Plugin loaded: package=$packageName, process=$processName, moduleVersion=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             logAlways("Device: ${CompatibilityManager.manufacturer} ${android.os.Build.MODEL}, Android ${CompatibilityManager.androidVersion} (API ${CompatibilityManager.sdkInt})")
             if (CompatibilityManager.hasAggressiveOem) logAlways("OEM detected: aggressive process management (${CompatibilityManager.manufacturer})")
-            logInfo("Initial config: logLevel=${logLevel.storedValue}, enableAi=$enableAi, clipboardTextSize=$clipboardTextSize")
-
             // Primary: ContextWrapper#attachBaseContext
             try {
                 XposedHelpers.findAndHookMethod(
@@ -368,11 +421,8 @@ class PluginEntry : IXposedHookLoadPackage {
                     object : XC_MethodHook() {
                         override fun afterHookedMethod(param: MethodHookParam) {
                             try {
-                                if (isInitialized.compareAndSet(false, true)) {
-                                    logAlways("Selected context hook path: ContextWrapper#attachBaseContext")
-                                    val context = param.args[0] as? Context ?: return
-                                    initializeKeyFlux(context, classLoader)
-                                }
+                                val context = param.args[0] as? Context ?: return
+                                initializeOnce(context, classLoader, "ContextWrapper#attachBaseContext")
                             } catch (t: Throwable) {
                                 logAlways("Error during ContextWrapper#attachBaseContext hook execution: ${t.message}")
                             }
@@ -392,11 +442,8 @@ class PluginEntry : IXposedHookLoadPackage {
                     object : XC_MethodHook() {
                         override fun afterHookedMethod(param: MethodHookParam) {
                             try {
-                                if (isInitialized.compareAndSet(false, true)) {
-                                    logAlways("Selected context hook path: Application#attach")
-                                    val context = param.args[0] as? Context ?: return
-                                    initializeKeyFlux(context, classLoader)
-                                }
+                                val context = param.args[0] as? Context ?: return
+                                initializeOnce(context, classLoader, "Application#attach")
                             } catch (t: Throwable) {
                                 logAlways("Error during Application#attach hook execution: ${t.message}")
                             }
@@ -407,17 +454,18 @@ class PluginEntry : IXposedHookLoadPackage {
                 logAlways("Failed to hook Application#attach: ${t.message}")
             }
 
-            try {
-                PreferenceHooker.hook(this, classLoader)
-            } catch (t: Throwable) {
-                logAlways("Preference hooks disabled: ${t.message}")
-                failedHooks.add("PreferenceHooker")
-            }
+            logAlways("Gboard settings injection is disabled; settings are managed by the standalone app")
             try {
                 ThemeHooker.hook(this, classLoader)
             } catch (t: Throwable) {
                 logAlways("Theme hooks disabled: ${t.message}")
                 failedHooks.add("ThemeHooker")
+            }
+            try {
+                ChineseLearningHooker.hook(this, classLoader)
+            } catch (t: Throwable) {
+                logAlways("Chinese learning hooks disabled: ${t.message}")
+                failedHooks.add("ChineseLearningHooker")
             }
 
             // Clipboard class discovery uses DexKit and must not block Gboard startup.
@@ -802,7 +850,6 @@ class PluginEntry : IXposedHookLoadPackage {
             val flagsFeature = key in setOf(
                 "keyflux_enable_ai",
                 "keyflux_enable_grammar",
-                "keyflux_enable_chinese_learning",
                 "keyflux_enable_multilingual",
                 "keyflux_enable_floating",
                 "keyflux_enable_access_point",
@@ -817,8 +864,18 @@ class PluginEntry : IXposedHookLoadPackage {
                 "keyflux_enable_custom_theme",
                 "keyflux_theme_editor"
             )
+            val chineseLearningUnavailable = key == "keyflux_enable_chinese_learning" &&
+                failedHooks.contains("ChineseLearningHooker") &&
+                (failedHooks.contains("FlagsManager") || failedHooks.contains("DexKitBridge"))
 
             when {
+                chineseLearningUnavailable -> {
+                    prefUI.setPreferenceEnabled(preference, false)
+                    prefUI.setPreferenceSummary(
+                        preference,
+                        Localization.getString("keyflux_feature_unavailable_chinese_learning")
+                    )
+                }
                 clipboardFeature && failedHooks.contains("ClipboardHooker") -> {
                     prefUI.setPreferenceEnabled(preference, false)
                     prefUI.setPreferenceSummary(
@@ -867,9 +924,9 @@ class PluginEntry : IXposedHookLoadPackage {
                     }
                 } else {
                     val checked = args?.lastOrNull() as? Boolean ?: return@newProxyInstance false
-                    savePreferenceToProvider(context, key, checked)
-                    prefsMap[key] = checked
-                    true
+                    val saved = savePreferenceToProvider(context, key, checked)
+                    if (saved) prefsMap[key] = checked
+                    saved
                 }
             }
             prefUI.setOnPreferenceChangeListener(preference, listener)
@@ -885,6 +942,56 @@ class PluginEntry : IXposedHookLoadPackage {
                 current = (current as? ContextWrapper)?.baseContext
             }
             return null
+        }
+
+        fun createChineseLearningPreference(): Any {
+            val key = "keyflux_enable_chinese_learning"
+            val preference = XposedHelpers.newInstance(preferenceClass, context)
+            prefUI.setPreferenceKey(preference, key)
+            prefUI.setPreferenceTitle(preference, Localization.getString(key + "_title"))
+            prefUI.setPreferencePersistent(preference, false)
+            prefUI.setIconSpaceReserved(preference, false)
+
+            fun updateSummary() {
+                val suffix = if (prefsMap[key] as? Boolean == true) "_enabled" else "_disabled"
+                prefUI.setPreferenceSummary(
+                    preference,
+                    Localization.getString(key + "_summary" + suffix)
+                )
+            }
+            updateSummary()
+
+            val listener = java.lang.reflect.Proxy.newProxyInstance(
+                classLoader,
+                arrayOf(clickListenerInterface)
+            ) { proxy, method, args ->
+                if (method.declaringClass == Any::class.java) {
+                    when (method.name) {
+                        "toString" -> "KeyFluxChineseLearningListener"
+                        "hashCode" -> System.identityHashCode(proxy)
+                        "equals" -> proxy === args?.getOrNull(0)
+                        else -> null
+                    }
+                } else {
+                    val activity = findActivity(context)
+                    if (activity == null) {
+                        logWarning("Cannot show Chinese learning settings without an Activity")
+                        return@newProxyInstance true
+                    }
+                    ChineseLearningSettingsDialog.show(activity, prefsMap) { changedKey, checked ->
+                        val saved = savePreferenceToProvider(context, changedKey, checked)
+                        if (saved) {
+                            prefsMap[changedKey] = checked
+                            updateSummary()
+                        }
+                        saved
+                    }
+                    true
+                }
+            }
+            prefUI.setOnPreferenceClickListener(preference, listener)
+            checkCompatibilityAndDisable(preference, key)
+            return preference
         }
 
         fun createInputPreference(key: String, defaultValue: String): Any {
@@ -1103,7 +1210,7 @@ class PluginEntry : IXposedHookLoadPackage {
             // dispatch an initial value. Reapply module state after attachment.
             val key = prefUI.getPreferenceKey(preference)
             val checked = key?.let { prefsMap[it] as? Boolean }
-            if (checked != null) {
+            if (checked != null && switchPreferenceClass.isInstance(preference)) {
                 prefUI.setPreferenceChecked(preference, checked)
             }
         }
@@ -1135,7 +1242,7 @@ class PluginEntry : IXposedHookLoadPackage {
         add(mainCategory, createSwitch("keyflux_enable_floating"))
         add(mainCategory, createSwitch("keyflux_enable_grammar"))
         add(mainCategory, createSwitch("keyflux_enable_ai"))
-        add(mainCategory, createSwitch("keyflux_enable_chinese_learning"))
+        add(mainCategory, createChineseLearningPreference())
         add(mainCategory, createInputPreference("keyflux_clip_days", "3"))
         add(mainCategory, createInputPreference("keyflux_clip_size", "10"))
         add(mainCategory, createSwitch("keyflux_secure_clipboard"))
