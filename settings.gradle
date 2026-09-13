@@ -1,8 +1,5 @@
 pluginManagement {
     repositories {
-        maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
-        maven { url = uri('https://maven.aliyun.com/repository/google') }
-        maven { url = uri('https://maven.aliyun.com/repository/public') }
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -11,11 +8,12 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven { url = uri('https://maven.aliyun.com/repository/google') }
-        maven { url = uri('https://maven.aliyun.com/repository/public') }
         google()
         mavenCentral()
     }
 }
 rootProject.name = "BlueKeyWorkshop"
 include ':app'
+
+// Resolve MeowUI from the checked-in source so UI and preference APIs stay in sync.
+includeBuild('MeowUI')

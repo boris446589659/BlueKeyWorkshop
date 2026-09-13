@@ -77,3 +77,8 @@
 ## 许可证
 
 本项目沿用上游项目的 [MIT License](LICENSE)。
+### MeowUI Attribution
+
+BlueKey Workshop includes [lingqiqi5211/MeowUI](https://github.com/lingqiqi5211/MeowUI)
+for Material 3 Expressive and Miuix Compose UI components. MeowUI is used under
+the Apache License 2.0; see `MeowUI/LICENSE` for the full license text.

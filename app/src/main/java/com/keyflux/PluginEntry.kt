@@ -40,7 +40,7 @@ class PluginEntry : IXposedHookLoadPackage {
         const val TAG = "xposed-KeyFlux-hook-"
         const val PACKAGE_NAME = "com.google.android.inputmethod.latin"
         private const val MAX_COLOR_OVERRIDE_LOGS = 32
-        val isInitialized = AtomicBoolean(false)
+        private val initializationState = AtomicInteger(0)
 
         /** Fragment class names that indicate the main Gboard settings screen. */
         val SETTINGS_HEADER_KEYWORDS = listOf(
@@ -127,6 +127,7 @@ class PluginEntry : IXposedHookLoadPackage {
     private val colorOverrideLimitNoted = AtomicBoolean(false)
 
     private val dexKitLock = Any()
+    private val hookScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var dexKitBridge: DexKitBridge? = null
     private val processStatusToken =
         "${android.os.Process.myPid()}:${android.os.SystemClock.elapsedRealtimeNanos()}"
@@ -269,7 +270,7 @@ class PluginEntry : IXposedHookLoadPackage {
         logAlways("Direct Boot active; flag overrides deferred until user unlock")
     }
 
-    internal fun initializeKeyFlux(context: Context, classLoader: ClassLoader) {
+    internal fun initializeKeyFlux(context: Context, classLoader: ClassLoader): Boolean {
         try {
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
             val code = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
@@ -291,6 +292,18 @@ class PluginEntry : IXposedHookLoadPackage {
             val sp = getSafeSharedPreferences(context, "keyflux_hook")
             val spKeyMethodReadConfig = "SP_KEY_METHOD_READ_CONFIG"
             val spKeyVersion = "SP_KEY_VERSION"
+            val spKeyModuleVersion = "SP_KEY_MODULE_VERSION"
+            val cachedModuleVersion = (sp.all[spKeyModuleVersion] as? Number)?.toInt()
+                ?: (sp.all[spKeyModuleVersion] as? String)?.toIntOrNull()
+                ?: -1
+            if (cachedModuleVersion != BuildConfig.VERSION_CODE) {
+                sp.edit {
+                    remove(spKeyMethodReadConfig)
+                    remove(spKeyVersion)
+                    putInt(spKeyModuleVersion, BuildConfig.VERSION_CODE)
+                }
+                log("Module version changed; invalidated cached flag reader")
+            }
             val versionCode = try {
                 val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
@@ -333,7 +346,7 @@ class PluginEntry : IXposedHookLoadPackage {
                     }
                     log("Discarded stale flag reader cache")
                 }
-                CoroutineScope(Dispatchers.Default).launch {
+                hookScope.launch {
                     log("Resolving flag reader via DexKit")
                     val method = withDexKitBridge(classLoader) { bridge ->
                         flagsOverride.findReadConfigMethod(bridge)
@@ -353,14 +366,26 @@ class PluginEntry : IXposedHookLoadPackage {
             }
         } catch (t: Throwable) {
             logAlways("Error during initializeKeyFlux: ${t.message}")
+            return false
         }
+        return true
     }
 
     internal fun initializeOnce(context: Context, classLoader: ClassLoader, source: String) {
-        if (!isInitialized.compareAndSet(false, true)) return
+        if (!initializationState.compareAndSet(0, 1)) return
         logAlways("Selected context hook path: $source")
-        registerModuleStatusReceiver(context)
-        initializeKeyFlux(context, classLoader)
+        try {
+            registerModuleStatusReceiver(context)
+            if (!initializeKeyFlux(context, classLoader)) {
+                initializationState.set(0)
+                return
+            }
+            initializationState.set(2)
+        } catch (t: Throwable) {
+            initializationState.set(0)
+            logAlways("Initialization failed; will retry on next attach: ${t.message}")
+            throw t
+        }
     }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -370,6 +395,7 @@ class PluginEntry : IXposedHookLoadPackage {
             override fun onReceive(receivedContext: Context, intent: Intent) {
                 if (intent.action != ModuleStatusProtocol.REQUEST_ACTION) return
                 val nonce = intent.getStringExtra(ModuleStatusProtocol.EXTRA_NONCE) ?: return
+                logAlways("Status request received nonce=$nonce")
                 val xposedApi = runCatching { XposedBridge.getXposedVersion() }.getOrDefault(-1)
                 val response = Intent(ModuleStatusProtocol.RESPONSE_ACTION)
                     .setPackage(ProviderAccessPolicy.MODULE_PACKAGE)
@@ -380,6 +406,7 @@ class PluginEntry : IXposedHookLoadPackage {
                     .putExtra(ModuleStatusProtocol.EXTRA_FAILED_HOOK_COUNT, failedHooks.size)
                     .putExtra(ModuleStatusProtocol.EXTRA_PROCESS_TOKEN, processStatusToken)
                 receivedContext.sendBroadcast(response)
+                logAlways("Status response sent nonce=$nonce to=${ProviderAccessPolicy.MODULE_PACKAGE}")
             }
         }
 
@@ -400,7 +427,8 @@ class PluginEntry : IXposedHookLoadPackage {
     // --- Xposed entry point ---
 
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
-        if (lpparam.packageName != PACKAGE_NAME || lpparam.processName != PACKAGE_NAME) {
+        if (lpparam.packageName != PACKAGE_NAME ||
+            (lpparam.processName != PACKAGE_NAME && !lpparam.processName.startsWith("$PACKAGE_NAME:"))) {
             return
         }
 

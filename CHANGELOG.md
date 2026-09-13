@@ -2,6 +2,24 @@
 
 本文件记录蓝键工坊的主要版本变化。
 
+## [1.3.0] - 2026-09-13
+
+### Added
+- Rebuilt the standalone settings UI on the checked-in MeowUI source.
+- Added Material 3 Expressive and Miuix appearance controls, palette options,
+  floating navigation, and project/license information.
+- Added animated page transitions with a stationary navigation bar.
+
+### Changed
+- Moved preference decryption off the first frame and shared loaded state
+  between settings pages to improve cold-start performance.
+- Added a themed launch window background to remove the white startup flash.
+- Improved restart-required status tracking so the reminder clears after Gboard
+  starts a new process.
+
+### Fixed
+- Preserved unrelated settings when saving custom theme palettes.
+
 ## [1.2.0-beta] - 2026-08-13
 
 ### 新增

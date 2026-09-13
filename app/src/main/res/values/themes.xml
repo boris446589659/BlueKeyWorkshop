@@ -6,6 +6,7 @@
         <item name="colorSecondary">@color/keyflux_secondary</item>
         <item name="colorTertiary">@color/keyflux_tertiary</item>
         <item name="android:colorBackground">@color/keyflux_background</item>
+        <item name="android:windowBackground">@color/keyflux_background</item>
         <item name="colorOnBackground">@color/keyflux_on_background</item>
         <item name="colorSurface">@color/keyflux_surface</item>
         <item name="colorSurfaceVariant">@color/keyflux_surface_variant</item>

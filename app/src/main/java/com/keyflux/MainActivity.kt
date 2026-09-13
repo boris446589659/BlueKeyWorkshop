@@ -238,7 +238,7 @@ class MainActivity : AppCompatActivity() {
                 com.google.android.material.R.attr.colorError
             )
         }
-        mainHandler.postAtTime(timeout, STATUS_TIMEOUT_TOKEN, android.os.SystemClock.uptimeMillis() + 1800L)
+        mainHandler.postAtTime(timeout, STATUS_TIMEOUT_TOKEN, android.os.SystemClock.uptimeMillis() + 5000L)
     }
 
     private fun showModuleStatus(titleRes: Int, summary: String, colorAttr: Int) {

@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <permission
+        android:name="com.keyflux.permission.STATUS"
+        android:protectionLevel="signature" />
+
     <queries>
         <package android:name="com.google.android.inputmethod.latin" />
         <package android:name="org.lsposed.manager" />
@@ -16,7 +20,7 @@
         android:theme="@style/Theme.BlueKeyWorkshop">
 
         <activity
-            android:name=".MainActivity"
+            android:name=".MeowMainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
